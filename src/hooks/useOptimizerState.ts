@@ -1,212 +1,157 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
+import { useEditorSettings } from "@/hooks/useEditorSettings";
+import { useEditorTransform } from "@/hooks/useEditorTransform";
+import { useExportFlow } from "@/hooks/useExportFlow";
+import type { ExportSuccessState } from "@/hooks/useExportFlow";
+import { useImageUpload } from "@/hooks/useImageUpload";
+import { applyPanDelta } from "@/lib/render/applyPan";
+import { computeDefaultTransformFromSettings } from "@/lib/render/computeTransform";
 import {
-  buildExportOptions,
-  exportOptimizedImage,
-  type ExportResult,
-} from "@/lib/imageExport";
-import { validateImageFile } from "@/lib/imageValidation";
-import {
-  DEFAULT_SETTINGS,
-  type ExportSuccessState,
-  type OptimizerSettings,
-  type OptimizerState,
-  type UploadedImage,
-} from "@/types/optimizer";
+  getFramingContext,
+  getFramingSettingsKey,
+} from "@/lib/render/framingContext";
+import type { SourceTransform } from "@/types/editor";
+import type { OptimizerState } from "@/types/optimizer";
 
 export type { ExportSuccessState };
 
 export function useOptimizerState() {
-  const [state, setState] = useState<OptimizerState>({
-    image: null,
-    settings: DEFAULT_SETTINGS,
+  const {
+    exportError,
+    exportSuccess,
+    isExporting,
+    handleDownload: runExport,
+    resetExportState,
+    clearExportError,
+    clearExportSuccess,
+  } = useExportFlow();
+
+  const {
+    image,
+    hasImage,
+    uploadError,
+    loadImageFromFile,
+    clearImage: clearUploadedImage,
+    clearUploadError,
+  } = useImageUpload({
+    onLoadStart: resetExportState,
   });
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [exportSuccess, setExportSuccess] = useState<ExportSuccessState | null>(
-    null,
+
+  const { settings, updateSettings, resetSettings } = useEditorSettings({
+    onSettingsChange: resetExportState,
+  });
+
+  const { transform, updateTransform, resetTransform } = useEditorTransform();
+
+  const framingSettingsKey = useMemo(
+    () => (hasImage ? getFramingSettingsKey(settings) : null),
+    [hasImage, settings],
   );
-  const [isExporting, setIsExporting] = useState(false);
-  const previewUrlRef = useRef<string | null>(null);
-  const successTimeoutRef = useRef<number | null>(null);
 
-  const revokePreviewUrl = useCallback((url: string | null) => {
-    if (url) {
-      URL.revokeObjectURL(url);
+  const computeDefaultTransform = useCallback((): SourceTransform | null => {
+    if (!image) {
+      return null;
     }
-  }, []);
 
-  const clearSuccessTimeout = useCallback(() => {
-    if (successTimeoutRef.current !== null) {
-      window.clearTimeout(successTimeoutRef.current);
-      successTimeoutRef.current = null;
-    }
-  }, []);
+    const framing = getFramingContext(image, settings);
+
+    return computeDefaultTransformFromSettings({
+      source: framing.source,
+      aspectRatio: settings.aspectRatio,
+      fitMode: settings.fitMode,
+      outputWidth: framing.outputWidth,
+    });
+  }, [image, settings]);
 
   useEffect(() => {
-    return () => {
-      revokePreviewUrl(previewUrlRef.current);
-      previewUrlRef.current = null;
-      clearSuccessTimeout();
-    };
-  }, [clearSuccessTimeout, revokePreviewUrl]);
-
-  const showExportSuccess = useCallback(
-    (result: ExportResult) => {
-      clearSuccessTimeout();
-      setExportSuccess({
-        filename: result.filename,
-        size: result.blob.size,
-        width: result.dimensions.width,
-        height: result.dimensions.height,
-      });
-
-      successTimeoutRef.current = window.setTimeout(() => {
-        setExportSuccess(null);
-        successTimeoutRef.current = null;
-      }, 6000);
-    },
-    [clearSuccessTimeout],
-  );
-
-  const loadImageFromFile = useCallback(
-    (file: File) => {
-      setUploadError(null);
-      setExportError(null);
-      setExportSuccess(null);
-      clearSuccessTimeout();
-
-      const validation = validateImageFile(file);
-      if (!validation.valid) {
-        setUploadError(validation.message ?? "Unable to upload this file.");
-        return;
-      }
-
-      const previewUrl = URL.createObjectURL(file);
-      const img = new window.Image();
-
-      img.onload = () => {
-        revokePreviewUrl(previewUrlRef.current);
-        previewUrlRef.current = previewUrl;
-
-        const uploadedImage: UploadedImage = {
-          file,
-          previewUrl,
-          name: file.name,
-          size: file.size,
-          mimeType: file.type,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-        };
-
-        setState((prev) => ({
-          ...prev,
-          image: uploadedImage,
-        }));
-      };
-
-      img.onerror = () => {
-        revokePreviewUrl(previewUrl);
-        setUploadError(
-          "This image could not be loaded. The file may be corrupted or unsupported.",
-        );
-      };
-
-      img.src = previewUrl;
-    },
-    [clearSuccessTimeout, revokePreviewUrl],
-  );
-
-  const clearImage = useCallback(() => {
-    revokePreviewUrl(previewUrlRef.current);
-    previewUrlRef.current = null;
-    setUploadError(null);
-    setExportError(null);
-    setExportSuccess(null);
-    clearSuccessTimeout();
-    setState((prev) => ({
-      ...prev,
-      image: null,
-    }));
-  }, [clearSuccessTimeout, revokePreviewUrl]);
-
-  const resetAll = useCallback(() => {
-    revokePreviewUrl(previewUrlRef.current);
-    previewUrlRef.current = null;
-    setUploadError(null);
-    setExportError(null);
-    setExportSuccess(null);
-    clearSuccessTimeout();
-    setState({
-      image: null,
-      settings: DEFAULT_SETTINGS,
-    });
-  }, [clearSuccessTimeout, revokePreviewUrl]);
-
-  const clearUploadError = useCallback(() => {
-    setUploadError(null);
-  }, []);
-
-  const clearExportError = useCallback(() => {
-    setExportError(null);
-  }, []);
-
-  const clearExportSuccess = useCallback(() => {
-    setExportSuccess(null);
-    clearSuccessTimeout();
-  }, [clearSuccessTimeout]);
-
-  const updateSettings = useCallback(
-    <K extends keyof OptimizerSettings>(key: K, value: OptimizerSettings[K]) => {
-      setExportSuccess(null);
-      clearSuccessTimeout();
-      setState((prev) => ({
-        ...prev,
-        settings: {
-          ...prev.settings,
-          [key]: value,
-        },
-      }));
-    },
-    [clearSuccessTimeout],
-  );
-
-  const handleDownload = useCallback(async () => {
-    if (!state.image || isExporting) {
+    if (!image || !framingSettingsKey) {
       return;
     }
 
-    setExportError(null);
-    setExportSuccess(null);
-    clearSuccessTimeout();
-    setIsExporting(true);
-
-    try {
-      const result = await exportOptimizedImage(
-        buildExportOptions(state.image, state.settings),
-      );
-      showExportSuccess(result);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Something went wrong while exporting the image.";
-      setExportError(message);
-    } finally {
-      setIsExporting(false);
+    const defaultTransform = computeDefaultTransform();
+    if (defaultTransform) {
+      updateTransform(defaultTransform);
     }
+  }, [image, framingSettingsKey, computeDefaultTransform, updateTransform]);
+
+  const resolvedTransform = useMemo(() => {
+    if (!image) {
+      return null;
+    }
+
+    return transform ?? computeDefaultTransform();
+  }, [computeDefaultTransform, image, transform]);
+
+  const state = useMemo<OptimizerState>(
+    () => ({
+      image,
+      settings,
+      transform: resolvedTransform ?? undefined,
+    }),
+    [image, resolvedTransform, settings],
+  );
+
+  const resetFraming = useCallback(() => {
+    const defaultTransform = computeDefaultTransform();
+    if (defaultTransform) {
+      updateTransform(defaultTransform);
+    }
+  }, [computeDefaultTransform, updateTransform]);
+
+  const applyPan = useCallback(
+    (delta: { dx: number; dy: number }) => {
+      if (!image || !resolvedTransform) {
+        return;
+      }
+
+      const framing = getFramingContext(image, settings);
+      const nextTransform = applyPanDelta(
+        resolvedTransform,
+        settings.fitMode,
+        delta,
+        framing.source,
+      );
+
+      updateTransform(nextTransform);
+    },
+    [image, resolvedTransform, settings, updateTransform],
+  );
+
+  const clearImage = useCallback(() => {
+    clearUploadedImage();
+    resetExportState();
+  }, [clearUploadedImage, resetExportState]);
+
+  const resetAll = useCallback(() => {
+    clearUploadedImage();
+    resetSettings();
+    resetTransform();
+    resetExportState();
   }, [
-    clearSuccessTimeout,
-    isExporting,
-    showExportSuccess,
-    state.image,
-    state.settings,
+    clearUploadedImage,
+    resetExportState,
+    resetSettings,
+    resetTransform,
   ]);
+
+  const handleDownload = useCallback(() => {
+    if (!image || !resolvedTransform) {
+      return;
+    }
+
+    void runExport({
+      image,
+      settings,
+      transform: resolvedTransform,
+    });
+  }, [image, resolvedTransform, runExport, settings]);
 
   return {
     state,
-    hasImage: state.image !== null,
+    hasImage,
+    resolvedTransform,
     uploadError,
     exportError,
     exportSuccess,
@@ -214,6 +159,8 @@ export function useOptimizerState() {
     loadImageFromFile,
     clearImage,
     resetAll,
+    resetFraming,
+    applyPan,
     clearUploadError,
     clearExportError,
     clearExportSuccess,

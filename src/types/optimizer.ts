@@ -14,6 +14,8 @@ export type ExportFormat = "png" | "jpeg" | "webp";
 
 export type OutputWidthPreset = "1080" | "1440" | "1920" | "custom";
 
+import type { SourceTransform } from "@/types/editor";
+
 export interface OptimizerSettings {
   aspectRatio: AspectRatio;
   fitMode: FitMode;
@@ -36,6 +38,8 @@ export interface UploadedImage {
 export interface OptimizerState {
   image: UploadedImage | null;
   settings: OptimizerSettings;
+  /** Explicit crop/placement; omitted means fit-mode defaults at render time. */
+  transform?: SourceTransform | null;
 }
 
 export const DEFAULT_SETTINGS: OptimizerSettings = {

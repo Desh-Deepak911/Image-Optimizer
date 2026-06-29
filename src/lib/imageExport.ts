@@ -1,5 +1,11 @@
-import { getNumericAspectRatio } from "@/lib/aspectRatio";
+import {
+  buildFrameRenderInput,
+  getFrameDimensions,
+  renderFrameToCanvas,
+} from "@/lib/render/drawFrame";
+import type { FrameDimensions } from "@/lib/render/types";
 import { resolveOutputWidth } from "@/lib/outputSize";
+import type { SourceTransform } from "@/types/editor";
 import type {
   AspectRatio,
   ExportFormat,
@@ -12,9 +18,6 @@ import {
   MIN_EXPORT_QUALITY,
 } from "@/types/optimizer";
 
-const PADDING_COLOR = "#e8e8ed";
-const JPEG_BACKGROUND = "#ffffff";
-
 export interface ExportRenderOptions {
   image: UploadedImage;
   aspectRatio: AspectRatio;
@@ -22,12 +25,11 @@ export interface ExportRenderOptions {
   exportFormat: ExportFormat;
   quality: number;
   outputWidth: number;
+  /** Optional explicit crop/placement. Omit to preserve legacy fit-mode rendering. */
+  transform?: SourceTransform | null;
 }
 
-export interface ExportDimensions {
-  width: number;
-  height: number;
-}
+export type ExportDimensions = FrameDimensions;
 
 function clampQuality(quality: number): number {
   return Math.min(
@@ -41,16 +43,7 @@ export function getExportDimensions(
   outputWidth: number,
   image: Pick<UploadedImage, "width" | "height">,
 ): ExportDimensions {
-  const ratio = getNumericAspectRatio(aspectRatio, image);
-
-  if (!ratio) {
-    return { width: image.width, height: image.height };
-  }
-
-  return {
-    width: outputWidth,
-    height: Math.max(1, Math.round(outputWidth / ratio)),
-  };
+  return getFrameDimensions(aspectRatio, outputWidth, image);
 }
 
 export function getExportDimensionsFromSettings(
@@ -74,168 +67,18 @@ function loadImageElement(src: string): Promise<HTMLImageElement> {
   });
 }
 
-function configureContext(ctx: CanvasRenderingContext2D): void {
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-}
-
-function getContainRect(
-  srcWidth: number,
-  srcHeight: number,
-  dstWidth: number,
-  dstHeight: number,
-) {
-  const scale = Math.min(dstWidth / srcWidth, dstHeight / srcHeight);
-  const width = srcWidth * scale;
-  const height = srcHeight * scale;
-
-  return {
-    x: (dstWidth - width) / 2,
-    y: (dstHeight - height) / 2,
-    width,
-    height,
-  };
-}
-
-function getCoverRect(
-  srcWidth: number,
-  srcHeight: number,
-  dstWidth: number,
-  dstHeight: number,
-) {
-  const scale = Math.max(dstWidth / srcWidth, dstHeight / srcHeight);
-  const width = srcWidth * scale;
-  const height = srcHeight * scale;
-
-  return {
-    x: (dstWidth - width) / 2,
-    y: (dstHeight - height) / 2,
-    width,
-    height,
-  };
-}
-
-function fillBackground(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  exportFormat: ExportFormat,
-): void {
-  ctx.fillStyle =
-    exportFormat === "jpeg" ? JPEG_BACKGROUND : PADDING_COLOR;
-  ctx.fillRect(0, 0, width, height);
-}
-
-function drawContainImage(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  canvasWidth: number,
-  canvasHeight: number,
-): void {
-  const rect = getContainRect(
-    img.naturalWidth,
-    img.naturalHeight,
-    canvasWidth,
-    canvasHeight,
-  );
-
-  ctx.drawImage(img, rect.x, rect.y, rect.width, rect.height);
-}
-
-function drawCoverImage(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  canvasWidth: number,
-  canvasHeight: number,
-): void {
-  const rect = getCoverRect(
-    img.naturalWidth,
-    img.naturalHeight,
-    canvasWidth,
-    canvasHeight,
-  );
-
-  ctx.drawImage(img, rect.x, rect.y, rect.width, rect.height);
-}
-
-function drawBlurBackground(
-  ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
-  canvasWidth: number,
-  canvasHeight: number,
-): void {
-  ctx.save();
-  ctx.filter = "blur(48px) saturate(1.5)";
-  const rect = getCoverRect(
-    img.naturalWidth,
-    img.naturalHeight,
-    canvasWidth,
-    canvasHeight,
-  );
-  const scale = 1.1;
-  const width = rect.width * scale;
-  const height = rect.height * scale;
-
-  ctx.drawImage(
-    img,
-    rect.x - (width - rect.width) / 2,
-    rect.y - (height - rect.height) / 2,
-    width,
-    height,
-  );
-  ctx.filter = "none";
-  ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-  ctx.restore();
-}
-
-function renderToCanvas(
-  img: HTMLImageElement,
-  options: ExportRenderOptions,
-): HTMLCanvasElement {
-  const { width, height } = getExportDimensions(
-    options.aspectRatio,
-    options.outputWidth,
-    options.image,
-  );
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-
-  const ctx = canvas.getContext("2d", { alpha: options.exportFormat !== "jpeg" });
-
-  if (!ctx) {
-    throw new Error("Canvas is not supported in this browser.");
-  }
-
-  configureContext(ctx);
-
-  if (options.fitMode === "contain-padding") {
-    fillBackground(ctx, width, height, options.exportFormat);
-    drawContainImage(ctx, img, width, height);
-    return canvas;
-  }
-
-  if (options.fitMode === "cover") {
-    if (options.exportFormat === "jpeg") {
-      fillBackground(ctx, width, height, options.exportFormat);
-    }
-    drawCoverImage(ctx, img, width, height);
-    return canvas;
-  }
-
-  if (options.fitMode === "blur-background") {
-    if (options.exportFormat === "jpeg") {
-      fillBackground(ctx, width, height, options.exportFormat);
-    }
-
-    drawBlurBackground(ctx, img, width, height);
-    drawContainImage(ctx, img, width, height);
-    return canvas;
-  }
-
-  throw new Error("Unsupported fit mode.");
+function toFrameRenderInput(options: ExportRenderOptions) {
+  return buildFrameRenderInput({
+    source: {
+      width: options.image.width,
+      height: options.image.height,
+    },
+    aspectRatio: options.aspectRatio,
+    fitMode: options.fitMode,
+    outputWidth: options.outputWidth,
+    exportFormat: options.exportFormat,
+    transform: options.transform,
+  });
 }
 
 function getMimeType(format: ExportFormat): string {
@@ -305,7 +148,8 @@ export async function exportOptimizedImage(
   options: ExportRenderOptions,
 ): Promise<ExportResult> {
   const img = await loadImageElement(options.image.previewUrl);
-  const canvas = renderToCanvas(img, options);
+  const frameInput = toFrameRenderInput(options);
+  const canvas = renderFrameToCanvas(img, frameInput);
   const dimensions = getExportDimensions(
     options.aspectRatio,
     options.outputWidth,
@@ -329,6 +173,7 @@ export async function exportOptimizedImage(
 export function buildExportOptions(
   image: UploadedImage,
   settings: OptimizerSettings,
+  transform?: SourceTransform | null,
 ): ExportRenderOptions {
   return {
     image,
@@ -340,5 +185,18 @@ export function buildExportOptions(
       settings.outputWidthPreset,
       settings.customOutputWidth,
     ),
+    transform,
   };
+}
+
+export function buildExportOptionsFromDocument(document: {
+  image: UploadedImage;
+  settings: OptimizerSettings;
+  transform?: SourceTransform | null;
+}): ExportRenderOptions {
+  return buildExportOptions(
+    document.image,
+    document.settings,
+    document.transform,
+  );
 }

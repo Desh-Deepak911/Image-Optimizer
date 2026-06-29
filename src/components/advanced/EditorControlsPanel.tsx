@@ -1,17 +1,29 @@
 "use client";
 
 import { SettingSection } from "@/components/ui/SettingSection";
+import { BACKGROUND_GRADIENT_PRESETS } from "@/lib/konva/backgroundGradients";
+import {
+  getEffectiveImageCrop,
+  isFullImageCrop,
+} from "@/lib/konva/imageCrop";
 import type {
+  BackgroundFillType,
   EditorLayer,
   EditorLayerUpdate,
+  ImageEditorLayer,
   ImageFilters,
+  ImageMaskType,
   StageBackground,
 } from "@/types/konvaEditor";
-import { DEFAULT_IMAGE_FILTERS } from "@/types/konvaEditor";
+import {
+  DEFAULT_IMAGE_FILTERS,
+  DEFAULT_IMAGE_LAYER_STYLE,
+} from "@/types/konvaEditor";
 
 interface EditorControlsPanelProps {
   selectedLayer: EditorLayer | null;
   background: StageBackground;
+  cropEditingLayerId?: string | null;
   onUpdateLayer: (
     layerId: string,
     update: EditorLayerUpdate,
@@ -19,6 +31,9 @@ interface EditorControlsPanelProps {
   ) => void;
   onUpdateBackground: (update: Partial<StageBackground>) => void;
   onHistoryCheckpoint: () => void;
+  onStartCropEdit?: (layerId: string) => void;
+  onFinishCropEdit?: () => void;
+  onResetCrop?: (layerId: string) => void;
 }
 
 function RangeControl({
@@ -103,6 +118,413 @@ function ColorControl({
         className="h-9 w-14 cursor-pointer rounded-md border border-black/[0.08] bg-white p-1"
       />
     </label>
+  );
+}
+
+function ImageStyleControls({
+  layerId,
+  style,
+  onUpdateLayer,
+  onHistoryCheckpoint,
+}: {
+  layerId: string;
+  style: typeof DEFAULT_IMAGE_LAYER_STYLE;
+  onUpdateLayer: (
+    layerId: string,
+    update: EditorLayerUpdate,
+    recordHistory?: boolean,
+  ) => void;
+  onHistoryCheckpoint: () => void;
+}) {
+  const updateStyle = (
+    update: Partial<typeof DEFAULT_IMAGE_LAYER_STYLE>,
+    recordHistory = false,
+  ) => {
+    onUpdateLayer(layerId, { style: update }, recordHistory);
+  };
+
+  const showCornerRadius =
+    style.mask === "none" || style.mask === "rounded";
+
+  return (
+    <SettingSection
+      title="Image styling"
+      description="Rounded corners, border, shadow, and glow"
+    >
+      <div className="space-y-4">
+        {showCornerRadius ? (
+          <RangeControl
+            label="Corner radius"
+            value={style.cornerRadius}
+            min={0}
+            max={120}
+            step={1}
+            onChange={(cornerRadius) => updateStyle({ cornerRadius }, false)}
+            onHistoryCheckpoint={onHistoryCheckpoint}
+          />
+        ) : null}
+        <RangeControl
+          label="Border width"
+          value={style.borderWidth}
+          min={0}
+          max={24}
+          step={1}
+          onChange={(borderWidth) => updateStyle({ borderWidth }, false)}
+          onHistoryCheckpoint={onHistoryCheckpoint}
+        />
+        {style.borderWidth > 0 ? (
+          <ColorControl
+            label="Border color"
+            value={style.borderColor}
+            onChange={(borderColor) => updateStyle({ borderColor })}
+          />
+        ) : null}
+        <RangeControl
+          label="Shadow blur"
+          value={style.shadowBlur}
+          min={0}
+          max={48}
+          step={1}
+          onChange={(shadowBlur) => updateStyle({ shadowBlur }, false)}
+          onHistoryCheckpoint={onHistoryCheckpoint}
+        />
+        {style.shadowBlur > 0 ? (
+          <>
+            <RangeControl
+              label="Shadow offset"
+              value={style.shadowOffsetY}
+              min={0}
+              max={32}
+              step={1}
+              onChange={(shadowOffsetY) => updateStyle({ shadowOffsetY }, false)}
+              onHistoryCheckpoint={onHistoryCheckpoint}
+            />
+            <ColorControl
+              label="Shadow color"
+              value={style.shadowColor}
+              onChange={(shadowColor) => updateStyle({ shadowColor })}
+            />
+          </>
+        ) : null}
+        <RangeControl
+          label="Glow blur"
+          value={style.glowBlur}
+          min={0}
+          max={64}
+          step={1}
+          onChange={(glowBlur) => updateStyle({ glowBlur }, false)}
+          onHistoryCheckpoint={onHistoryCheckpoint}
+        />
+        {style.glowBlur > 0 ? (
+          <>
+            <RangeControl
+              label="Glow intensity"
+              value={style.glowOpacity}
+              min={0}
+              max={1}
+              step={0.05}
+              onChange={(glowOpacity) => updateStyle({ glowOpacity }, false)}
+              onHistoryCheckpoint={onHistoryCheckpoint}
+              formatValue={(value) => `${Math.round(value * 100)}%`}
+            />
+            <ColorControl
+              label="Glow color"
+              value={style.glowColor}
+              onChange={(glowColor) => updateStyle({ glowColor })}
+            />
+          </>
+        ) : null}
+      </div>
+    </SettingSection>
+  );
+}
+
+const IMAGE_MASK_OPTIONS: { id: ImageMaskType; label: string }[] = [
+  { id: "none", label: "None" },
+  { id: "rectangle", label: "Rectangle" },
+  { id: "rounded", label: "Rounded" },
+  { id: "circle", label: "Circle" },
+];
+
+function ImageMaskControls({
+  layerId,
+  style,
+  onUpdateLayer,
+}: {
+  layerId: string;
+  style: typeof DEFAULT_IMAGE_LAYER_STYLE;
+  onUpdateLayer: (
+    layerId: string,
+    update: EditorLayerUpdate,
+    recordHistory?: boolean,
+  ) => void;
+}) {
+  return (
+    <SettingSection
+      title="Image mask"
+      description="Clip the image to a shape"
+    >
+      <div className="grid grid-cols-2 gap-2">
+        {IMAGE_MASK_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() =>
+              onUpdateLayer(layerId, { style: { mask: option.id } })
+            }
+            className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
+              style.mask === option.id
+                ? "border-[#0071e3] bg-[#0071e3]/[0.08] text-[#0071e3]"
+                : "border-black/[0.06] bg-[#f5f5f7] text-[#1d1d1f] hover:border-[#0071e3]/30"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </SettingSection>
+  );
+}
+
+function ImageCropControls({
+  layer,
+  isEditing,
+  onStartCropEdit,
+  onFinishCropEdit,
+  onResetCrop,
+}: {
+  layer: ImageEditorLayer;
+  isEditing: boolean;
+  onStartCropEdit?: (layerId: string) => void;
+  onFinishCropEdit?: () => void;
+  onResetCrop?: (layerId: string) => void;
+}) {
+  const crop = getEffectiveImageCrop(
+    layer.crop,
+    layer.image.width,
+    layer.image.height,
+  );
+  const hasCustomCrop = !isFullImageCrop(
+    crop,
+    layer.image.width,
+    layer.image.height,
+  );
+
+  return (
+    <SettingSection
+      title="Crop"
+      description="Trim the source image region shown in this layer"
+    >
+      <div className="space-y-3">
+        {isEditing ? (
+          <p className="rounded-lg bg-[#0071e3]/[0.08] px-3 py-2 text-xs text-[#0071e3]">
+            Drag the image to reposition the crop, or pull the corner handles
+            to resize it.
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {isEditing ? (
+            <button
+              type="button"
+              onClick={onFinishCropEdit}
+              className="rounded-lg bg-[#0071e3] px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-[#0077ed]"
+            >
+              Done cropping
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onStartCropEdit?.(layer.id)}
+              className="rounded-lg border border-black/[0.06] bg-[#f5f5f7] px-3 py-2 text-xs font-medium text-[#1d1d1f] transition-colors hover:border-[#0071e3]/30 hover:bg-[#0071e3]/[0.06]"
+            >
+              Crop image
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={!hasCustomCrop}
+            onClick={() => onResetCrop?.(layer.id)}
+            className="rounded-lg border border-black/[0.06] bg-[#f5f5f7] px-3 py-2 text-xs font-medium text-[#1d1d1f] transition-colors hover:border-[#0071e3]/30 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Reset crop
+          </button>
+        </div>
+      </div>
+    </SettingSection>
+  );
+}
+
+function BackgroundControls({
+  background,
+  onUpdateBackground,
+  onHistoryCheckpoint,
+}: {
+  background: StageBackground;
+  onUpdateBackground: (update: Partial<StageBackground>) => void;
+  onHistoryCheckpoint: () => void;
+}) {
+  const fillType = background.fillType ?? "solid";
+
+  const setFillType = (nextFillType: BackgroundFillType) => {
+    onUpdateBackground({
+      fillType: nextFillType,
+      transparent: false,
+    });
+  };
+
+  return (
+    <SettingSection
+      title="Background"
+      description="Canvas fill behind all layers"
+    >
+      <div className="space-y-4">
+        <ToggleControl
+          label="Transparent background"
+          checked={background.transparent}
+          onChange={(transparent) => onUpdateBackground({ transparent })}
+        />
+
+        {!background.transparent ? (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              {(["solid", "linear", "radial"] as BackgroundFillType[]).map(
+                (type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setFillType(type)}
+                    className={`rounded-lg border px-2 py-2 text-xs font-medium capitalize transition-colors ${
+                      fillType === type
+                        ? "border-[#0071e3] bg-[#0071e3]/[0.08] text-[#0071e3]"
+                        : "border-black/[0.06] bg-[#f5f5f7] text-[#1d1d1f] hover:border-[#0071e3]/30"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ),
+              )}
+            </div>
+
+            {fillType === "solid" ? (
+              <ColorControl
+                label="Background color"
+                value={background.color}
+                onChange={(color) => onUpdateBackground({ color })}
+              />
+            ) : null}
+
+            {fillType === "linear" ? (
+              <>
+                <RangeControl
+                  label="Gradient angle"
+                  value={background.gradientAngle ?? 180}
+                  min={0}
+                  max={360}
+                  step={1}
+                  onChange={(gradientAngle) =>
+                    onUpdateBackground({ gradientAngle })
+                  }
+                  onHistoryCheckpoint={onHistoryCheckpoint}
+                  formatValue={(value) => `${value}°`}
+                />
+                <ColorControl
+                  label="Start color"
+                  value={background.gradientStops?.[0]?.color ?? background.color}
+                  onChange={(color) =>
+                    onUpdateBackground({
+                      gradientStops: [
+                        { offset: 0, color },
+                        background.gradientStops?.[1] ?? {
+                          offset: 1,
+                          color: background.color,
+                        },
+                      ],
+                    })
+                  }
+                />
+                <ColorControl
+                  label="End color"
+                  value={
+                    background.gradientStops?.[1]?.color ?? background.color
+                  }
+                  onChange={(color) =>
+                    onUpdateBackground({
+                      gradientStops: [
+                        background.gradientStops?.[0] ?? {
+                          offset: 0,
+                          color: background.color,
+                        },
+                        { offset: 1, color },
+                      ],
+                    })
+                  }
+                />
+              </>
+            ) : null}
+
+            {fillType === "radial" ? (
+              <>
+                <ColorControl
+                  label="Inner color"
+                  value={background.gradientStops?.[0]?.color ?? background.color}
+                  onChange={(color) =>
+                    onUpdateBackground({
+                      gradientStops: [
+                        { offset: 0, color },
+                        background.gradientStops?.[1] ?? {
+                          offset: 1,
+                          color: background.color,
+                        },
+                      ],
+                    })
+                  }
+                />
+                <ColorControl
+                  label="Outer color"
+                  value={
+                    background.gradientStops?.[1]?.color ?? background.color
+                  }
+                  onChange={(color) =>
+                    onUpdateBackground({
+                      gradientStops: [
+                        background.gradientStops?.[0] ?? {
+                          offset: 0,
+                          color: background.color,
+                        },
+                        { offset: 1, color },
+                      ],
+                    })
+                  }
+                />
+              </>
+            ) : null}
+
+            <div>
+              <p className="mb-2 text-xs font-medium text-[#1d1d1f]">
+                Preset gradients
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {BACKGROUND_GRADIENT_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() =>
+                      onUpdateBackground({
+                        transparent: false,
+                        ...preset.background,
+                      })
+                    }
+                    className="rounded-lg border border-black/[0.06] px-2 py-2 text-left text-xs font-medium text-[#1d1d1f] transition-colors hover:border-[#0071e3]/30"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : null}
+      </div>
+    </SettingSection>
   );
 }
 
@@ -196,9 +618,13 @@ function ImageFilterControls({
 export function EditorControlsPanel({
   selectedLayer,
   background,
+  cropEditingLayerId = null,
   onUpdateLayer,
   onUpdateBackground,
   onHistoryCheckpoint,
+  onStartCropEdit,
+  onFinishCropEdit,
+  onResetCrop,
 }: EditorControlsPanelProps) {
   return (
     <aside className="flex flex-col rounded-2xl border border-black/[0.06] bg-white shadow-sm">
@@ -210,25 +636,11 @@ export function EditorControlsPanel({
       </div>
 
       <div className="max-h-[32rem] space-y-6 overflow-y-auto px-4 py-5">
-        <SettingSection
-          title="Background"
-          description="Canvas fill behind all layers"
-        >
-          <div className="space-y-3">
-            <ToggleControl
-              label="Transparent background"
-              checked={background.transparent}
-              onChange={(transparent) => onUpdateBackground({ transparent })}
-            />
-            {!background.transparent ? (
-              <ColorControl
-                label="Background color"
-                value={background.color}
-                onChange={(color) => onUpdateBackground({ color })}
-              />
-            ) : null}
-          </div>
-        </SettingSection>
+        <BackgroundControls
+          background={background}
+          onUpdateBackground={onUpdateBackground}
+          onHistoryCheckpoint={onHistoryCheckpoint}
+        />
 
         {selectedLayer ? (
           <>
@@ -326,12 +738,41 @@ export function EditorControlsPanel({
             ) : null}
 
             {selectedLayer.type === "image" ? (
-              <ImageFilterControls
-                layerId={selectedLayer.id}
-                filters={selectedLayer.filters}
-                onUpdateLayer={onUpdateLayer}
-                onHistoryCheckpoint={onHistoryCheckpoint}
-              />
+              (() => {
+                const imageStyle = {
+                  ...DEFAULT_IMAGE_LAYER_STYLE,
+                  ...selectedLayer.style,
+                };
+
+                return (
+                  <>
+                    <ImageCropControls
+                      layer={selectedLayer}
+                      isEditing={cropEditingLayerId === selectedLayer.id}
+                      onStartCropEdit={onStartCropEdit}
+                      onFinishCropEdit={onFinishCropEdit}
+                      onResetCrop={onResetCrop}
+                    />
+                    <ImageMaskControls
+                      layerId={selectedLayer.id}
+                      style={imageStyle}
+                      onUpdateLayer={onUpdateLayer}
+                    />
+                    <ImageStyleControls
+                      layerId={selectedLayer.id}
+                      style={imageStyle}
+                      onUpdateLayer={onUpdateLayer}
+                      onHistoryCheckpoint={onHistoryCheckpoint}
+                    />
+                    <ImageFilterControls
+                      layerId={selectedLayer.id}
+                      filters={selectedLayer.filters}
+                      onUpdateLayer={onUpdateLayer}
+                      onHistoryCheckpoint={onHistoryCheckpoint}
+                    />
+                  </>
+                );
+              })()
             ) : null}
           </>
         ) : (

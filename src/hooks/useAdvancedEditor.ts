@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useAdvancedEditorSettings } from "@/hooks/useAdvancedEditorSettings";
 import { useExportFlow } from "@/hooks/useExportFlow";
+import { useEditorProjects } from "@/hooks/useEditorProjects";
 import { useKonvaLayers } from "@/hooks/useKonvaLayers";
 import {
   downloadKonvaExport,
@@ -10,6 +11,9 @@ import {
   getAdvancedExportFilename,
 } from "@/lib/konva/exportKonvaStage";
 import type Konva from "konva";
+import { getEditorTemplate } from "@/lib/konva/editorTemplates";
+import type { AdvancedEditorSettings } from "@/types/konvaEditor";
+import type { EditorDocumentState } from "@/hooks/useKonvaLayers";
 
 export function useAdvancedEditor() {
   const stageRef = useRef<Konva.Stage | null>(null);
@@ -28,6 +32,8 @@ export function useAdvancedEditor() {
     settings,
     updateSettings,
     resetSettings,
+    replaceSettings,
+    applyCanvasSize,
     canvasDimensions,
     exportDimensions,
   } = useAdvancedEditorSettings({
@@ -38,6 +44,46 @@ export function useAdvancedEditor() {
     stageWidth: canvasDimensions.width,
     stageHeight: canvasDimensions.height,
     onLayersChange: resetExportState,
+  });
+
+  const { setBackground, loadDocument } = layersState;
+
+  const documentState = useMemo<EditorDocumentState>(
+    () => ({
+      layers: layersState.layers,
+      selectedLayerId: layersState.selectedLayerId,
+      background: layersState.background,
+    }),
+    [
+      layersState.background,
+      layersState.layers,
+      layersState.selectedLayerId,
+    ],
+  );
+
+  const loadProjectState = useCallback(
+    ({
+      settings: nextSettings,
+      document,
+    }: {
+      settings: AdvancedEditorSettings;
+      document: EditorDocumentState;
+      projectId: string | null;
+      projectName: string;
+    }) => {
+      replaceSettings(nextSettings);
+      loadDocument(document);
+      resetExportState();
+    },
+    [loadDocument, replaceSettings, resetExportState],
+  );
+
+  const projects = useEditorProjects({
+    settings,
+    document: documentState,
+    canvasWidth: canvasDimensions.width,
+    canvasHeight: canvasDimensions.height,
+    onLoadProject: loadProjectState,
   });
 
   const setStageRef = useCallback((stage: Konva.Stage | null) => {
@@ -85,15 +131,33 @@ export function useAdvancedEditor() {
     settings.quality,
   ]);
 
+  const applyTemplate = useCallback(
+    (templateId: string) => {
+      const template = getEditorTemplate(templateId);
+      if (!template) {
+        return;
+      }
+
+      applyCanvasSize(template.width, template.height);
+      setBackground(template.background);
+      resetExportState();
+      projects.markProjectUntitled();
+    },
+    [applyCanvasSize, projects, resetExportState, setBackground],
+  );
+
   const resetAll = useCallback(() => {
     layersState.resetLayers();
     resetSettings();
     resetExportState();
-  }, [layersState, resetExportState, resetSettings]);
+    projects.markProjectUntitled();
+  }, [layersState, projects, resetExportState, resetSettings]);
 
   return {
     settings,
     updateSettings,
+    applyTemplate,
+    applyCanvasSize,
     canvasDimensions,
     exportDimensions,
     exportError,
@@ -105,5 +169,6 @@ export function useAdvancedEditor() {
     clearExportError,
     clearExportSuccess,
     ...layersState,
+    ...projects,
   };
 }

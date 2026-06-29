@@ -68,14 +68,38 @@ export function useAdvancedEditorSettings(
     [onSettingsChange],
   );
 
+  const applyCanvasSize = useCallback(
+    (width: number, height: number) => {
+      onSettingsChange?.();
+      setSettings((previous) => ({
+        ...previous,
+        canvasPreset: "custom",
+        customCanvasWidth: width,
+        customCanvasHeight: height,
+        exportPreset: "canvas",
+      }));
+    },
+    [onSettingsChange],
+  );
+
   const resetSettings = useCallback(() => {
     setSettings(DEFAULT_ADVANCED_EDITOR_SETTINGS);
   }, []);
+
+  const replaceSettings = useCallback(
+    (nextSettings: AdvancedEditorSettings) => {
+      onSettingsChange?.();
+      setSettings(nextSettings);
+    },
+    [onSettingsChange],
+  );
 
   return {
     settings,
     updateSettings,
     resetSettings,
+    replaceSettings,
+    applyCanvasSize,
     canvasDimensions,
     exportDimensions,
   };

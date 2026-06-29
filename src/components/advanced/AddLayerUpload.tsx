@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
 import {
   ACCEPTED_IMAGE_EXTENSIONS,
   ACCEPTED_IMAGE_LABEL,
@@ -8,17 +8,24 @@ import {
 import { MAX_FILE_SIZE_BYTES } from "@/lib/imageValidation";
 import { formatFileSize } from "@/lib/formatters";
 
+export interface AddLayerUploadHandle {
+  openFilePicker: () => void;
+}
+
 interface AddLayerUploadProps {
   onFileSelect: (file: File) => void;
   layerCount: number;
 }
 
-export function AddLayerUpload({ onFileSelect, layerCount }: AddLayerUploadProps) {
+export const AddLayerUpload = forwardRef<AddLayerUploadHandle, AddLayerUploadProps>(
+  function AddLayerUpload({ onFileSelect, layerCount }, ref) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const openFilePicker = useCallback(() => {
     inputRef.current?.click();
   }, []);
+
+  useImperativeHandle(ref, () => ({ openFilePicker }), [openFilePicker]);
 
   const handleInputChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -65,4 +72,5 @@ export function AddLayerUpload({ onFileSelect, layerCount }: AddLayerUploadProps
       />
     </div>
   );
-}
+  },
+);

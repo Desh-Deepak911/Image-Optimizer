@@ -21,25 +21,57 @@ A browser-only screenshot and photo optimizer with a multi-layer advanced editor
 
 Switch to **Advanced editor** for a full canvas composition workflow powered by [react-konva](https://konvajs.org/docs/react/):
 
+#### Canvas & layers
+
 - **Multi-layer canvas** — add multiple images, text, and shapes on one artboard
 - **Transform tools** — drag, resize, and rotate any layer with on-canvas handles
 - **Layer panel** — reorder, duplicate, lock, hide, and delete layers
-- **Image filters** — brightness, contrast, saturation, blur, grayscale, and sepia
-- **Text tool** — add editable text with font size, color, and opacity
-- **Shapes** — rectangle, circle, and line with fill/stroke controls
-- **Background** — solid color or transparent (checkerboard preview)
-- **Canvas size presets** — 1080×1080, 1080×1350, 1080×1920, 1920×1080, or custom
-- **Export size presets** — current canvas size, social presets, or custom output dimensions
-- **Export formats** — PNG, JPEG, and WebP (with quality control)
 - **Undo / redo** — snapshot-based history (up to 50 steps)
 - **Keyboard shortcuts**
   - `Delete` / `Backspace` — remove selected layer
   - `⌘/Ctrl + Z` — undo
   - `⌘/Ctrl + Shift + Z` — redo
 
+#### Templates & layouts
+
+- **Template gallery** — Instagram Story/Post/Portrait, YouTube Thumbnail, LinkedIn Post, App Screenshot, Before/After Collage, Screenshot Showcase
+- **Quick layouts** — side-by-side, before/after, before/after collage, comparison split, 3- and 4-image grids, centered screenshot, auto-padding, blur background poster
+- **Screenshot tools** — browser, Mac window, and phone device frames; auto-padding; clean background presets; comparison layouts with divider and Before/After labels
+
+#### Editing tools
+
+- **Image filters** — brightness, contrast, saturation, blur, grayscale, and sepia
+- **Image styling** — rounded corners, border, drop shadow, and glow
+- **Crop** — interactive crop with reset; source-region editing on image layers
+- **Image masks** — none, rectangle, rounded rectangle, and circle
+- **Text tool** — editable text with font size, color, and opacity
+- **Shapes** — rectangle, circle, and line with fill/stroke controls
+- **Background** — solid color, linear/radial gradients, and preset gradients, or transparent (checkerboard preview)
+
+#### Layout & precision
+
+- **Layer quick actions** — center, fit/fill canvas, duplicate, reorder, reset effects
+- **Alignment controls** — align left, center, right, top, middle, bottom
+- **Right-click context menu** — duplicate, bring forward, send backward, center, fit/fill, reset effects, delete
+- **Snap guides** — snap to canvas center/edges and other layer edges while dragging
+- **Canvas zoom** — zoom in/out, reset zoom, fit canvas to screen
+
+#### Export & projects
+
+- **Canvas size presets** — 1080×1080, 1080×1350, 1080×1920, 1920×1080, or custom
+- **Export size presets** — current canvas size, social presets, or custom output dimensions
+- **Export formats** — PNG, JPEG, and WebP (with quality control); transformer handles and editing guides are hidden from exports
+- **Save designs locally** — save to browser localStorage, reopen recent designs, rename, and delete
+- **Project JSON** — export and import full project files (canvas, layers, styling, filters, and export settings)
+
+#### Mobile
+
+- Responsive layout with scrollable sidebar and fixed mobile download bar
+- Touch-friendly canvas editing on smaller screens
+
 ### Privacy
 
-All processing happens **entirely in your browser**. Images are read into memory on your device and exported via the Canvas API. Nothing is sent to a server.
+All processing happens **entirely in your browser**. Images are read into memory on your device and exported via the Canvas API. Saved projects stay in your browser’s local storage. Nothing is sent to a server.
 
 ## Tech stack
 
@@ -104,12 +136,12 @@ No environment variables or external services are needed for core functionality.
 src/
 ├── app/                    # Next.js app router (layout, page, styles)
 ├── components/
-│   ├── advanced/           # Konva editor (canvas, layers, export panel)
+│   ├── advanced/           # Konva editor (canvas, layers, projects, export)
 │   ├── editor/             # Optimizer-mode interactive viewport
 │   └── optimizer/          # Shared UI shell and optimizer workspace
-├── hooks/                  # Client state (upload, settings, history, export)
+├── hooks/                  # Client state (upload, settings, history, projects)
 ├── lib/
-│   ├── konva/              # Stage export, filters, output presets
+│   ├── konva/              # Stage export, filters, layouts, project storage
 │   └── render/             # Optimizer geometry and draw pipeline
 └── types/                  # Shared TypeScript types
 ```
@@ -118,7 +150,6 @@ src/
 
 - **Batch processing** — optimize multiple images in one session
 - **Smart crop detection** — suggest focal points and auto-frame subjects
-- **Snap guides and alignment** — precision layout helpers in the advanced editor
 - **Optional AI upscaling** — client-side or opt-in enhancement for low-resolution sources
 
 ## License

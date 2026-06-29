@@ -4,6 +4,7 @@ import {
   MIN_EXPORT_QUALITY,
 } from "@/types/optimizer";
 import type { StageBackground } from "@/types/konvaEditor";
+import { getStageBackgroundFillProps } from "@/lib/konva/backgroundGradients";
 import Konva from "konva";
 
 function clampQuality(quality: number): number {
@@ -84,6 +85,14 @@ export function exportKonvaStageToBlob(
       transformerVisibility.push({ node, visible: node.visible() });
       node.visible(false);
     });
+    stage.find(".snap-guide").forEach((node) => {
+      transformerVisibility.push({ node, visible: node.visible() });
+      node.visible(false);
+    });
+    stage.find(".crop-guide").forEach((node) => {
+      transformerVisibility.push({ node, visible: node.visible() });
+      node.visible(false);
+    });
     contentLayer?.batchDraw();
 
     if (contentLayer) {
@@ -109,8 +118,12 @@ export function exportKonvaStageToBlob(
           y: 0,
           width: canvasWidth,
           height: canvasHeight,
-          fill: background.color,
           listening: false,
+          ...getStageBackgroundFillProps(
+            background,
+            canvasWidth,
+            canvasHeight,
+          ),
         });
         contentLayer.add(tempBackground);
         tempBackground.moveToBottom();

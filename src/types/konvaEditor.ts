@@ -1,4 +1,9 @@
-import type { ExportFormat, OptimizerSettings, UploadedImage } from "@/types/optimizer";
+import type {
+  ExportFormat,
+  OptimizerSettings,
+  UploadedImage,
+} from "@/types/optimizer";
+import { createFullImageCrop } from "@/lib/konva/imageCrop";
 
 export type AppMode = "optimizer" | "advanced";
 
@@ -46,9 +51,42 @@ export interface ImageFilters {
   sepia: boolean;
 }
 
+export interface ImageLayerStyle {
+  cornerRadius: number;
+  borderWidth: number;
+  borderColor: string;
+  shadowBlur: number;
+  shadowColor: string;
+  shadowOffsetY: number;
+  shadowOpacity: number;
+  mask: ImageMaskType;
+  glowBlur: number;
+  glowColor: string;
+  glowOpacity: number;
+}
+
+export type ImageMaskType = "none" | "rectangle" | "rounded" | "circle";
+
+export interface ImageSourceCrop {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type BackgroundFillType = "solid" | "linear" | "radial";
+
+export interface GradientStop {
+  offset: number;
+  color: string;
+}
+
 export interface StageBackground {
   color: string;
   transparent: boolean;
+  fillType?: BackgroundFillType;
+  gradientStops?: GradientStop[];
+  gradientAngle?: number;
 }
 
 interface BaseEditorLayer {
@@ -67,7 +105,9 @@ export interface ImageEditorLayer extends BaseEditorLayer {
   image: UploadedImage;
   width: number;
   height: number;
+  crop?: ImageSourceCrop;
   filters: ImageFilters;
+  style: ImageLayerStyle;
 }
 
 export interface TextEditorLayer extends BaseEditorLayer {
@@ -85,6 +125,10 @@ export interface ShapeEditorLayer extends BaseEditorLayer {
   width: number;
   height: number;
   strokeWidth: number;
+  shadowBlur?: number;
+  shadowColor?: string;
+  shadowOffsetY?: number;
+  shadowOpacity?: number;
 }
 
 export type EditorLayer = ImageEditorLayer | TextEditorLayer | ShapeEditorLayer;
@@ -108,11 +152,13 @@ export interface LayerTransformUpdate {
 }
 
 export type EditorLayerUpdate = Partial<
-  Omit<ImageEditorLayer, "id" | "type" | "image" | "filters"> &
+  Omit<ImageEditorLayer, "id" | "type" | "image" | "filters" | "style"> &
     Omit<TextEditorLayer, "id" | "type"> &
     Omit<ShapeEditorLayer, "id" | "type">
 > & {
   filters?: Partial<ImageFilters>;
+  style?: Partial<ImageLayerStyle>;
+  crop?: ImageSourceCrop;
 };
 
 export const DEFAULT_IMAGE_FILTERS: ImageFilters = {
@@ -124,9 +170,29 @@ export const DEFAULT_IMAGE_FILTERS: ImageFilters = {
   sepia: false,
 };
 
+export const DEFAULT_IMAGE_LAYER_STYLE: ImageLayerStyle = {
+  cornerRadius: 0,
+  borderWidth: 0,
+  borderColor: "#ffffff",
+  shadowBlur: 0,
+  shadowColor: "#000000",
+  shadowOffsetY: 8,
+  shadowOpacity: 0.35,
+  mask: "none",
+  glowBlur: 0,
+  glowColor: "#0071e3",
+  glowOpacity: 0.65,
+};
+
 export const DEFAULT_STAGE_BACKGROUND: StageBackground = {
   color: "#ffffff",
   transparent: true,
+  fillType: "solid",
+  gradientStops: [
+    { offset: 0, color: "#ffffff" },
+    { offset: 1, color: "#f5f5f7" },
+  ],
+  gradientAngle: 180,
 };
 
 export function createLayerId(): string {
@@ -182,6 +248,8 @@ export function createImageLayer(
     locked: false,
     opacity: 1,
     filters: { ...DEFAULT_IMAGE_FILTERS },
+    style: { ...DEFAULT_IMAGE_LAYER_STYLE },
+    crop: createFullImageCrop(image.width, image.height),
     ...placement,
   };
 }
@@ -194,19 +262,49 @@ export function createTextLayer(
   const width = 280;
   const fontSize = 48;
 
+  return createTextLayerAt({
+    text: "Edit me",
+    x: (stageWidth - width) / 2,
+    y: stageHeight / 2 - fontSize / 2,
+    width,
+    fontSize,
+    fill: "#1d1d1f",
+    name: `Text ${layerIndex + 1}`,
+  });
+}
+
+export function createTextLayerAt({
+  text,
+  x,
+  y,
+  width = 280,
+  fontSize,
+  fill,
+  name,
+  locked = false,
+}: {
+  text: string;
+  x: number;
+  y: number;
+  width?: number;
+  fontSize: number;
+  fill: string;
+  name: string;
+  locked?: boolean;
+}): TextEditorLayer {
   return {
     id: createLayerId(),
     type: "text",
-    name: `Text ${layerIndex + 1}`,
-    text: "Edit me",
+    name,
+    text,
     fontSize,
-    fill: "#1d1d1f",
+    fill,
     visible: true,
-    locked: false,
+    locked,
     opacity: 1,
     width,
-    x: (stageWidth - width) / 2,
-    y: stageHeight / 2 - fontSize / 2,
+    x,
+    y,
     rotation: 0,
   };
 }
@@ -229,21 +327,62 @@ export function createShapeLayer(
   const config = defaults[shape];
   const offset = layerIndex * 16;
 
-  return {
-    id: createLayerId(),
-    type: "shape",
+  return createShapeLayerAt({
     shape,
     name: config.name,
     fill: config.fill,
-    strokeWidth: shape === "line" ? 4 : 0,
-    visible: true,
-    locked: false,
-    opacity: 1,
     width: config.width,
     height: config.height,
     x: (stageWidth - config.width) / 2 + offset,
     y: (stageHeight - config.height) / 2 + offset,
+    strokeWidth: shape === "line" ? 4 : 0,
+  });
+}
+
+export function createShapeLayerAt({
+  shape,
+  x,
+  y,
+  width,
+  height,
+  fill,
+  name,
+  strokeWidth = 0,
+  locked = false,
+  shadowStyle,
+}: {
+  shape: ShapeKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fill: string;
+  name: string;
+  strokeWidth?: number;
+  locked?: boolean;
+  shadowStyle?: {
+    shadowBlur: number;
+    shadowColor: string;
+    shadowOffsetY: number;
+    shadowOpacity: number;
+  };
+}): ShapeEditorLayer {
+  return {
+    id: createLayerId(),
+    type: "shape",
+    shape,
+    name,
+    fill,
+    strokeWidth,
+    visible: true,
+    locked,
+    opacity: 1,
+    width,
+    height,
+    x,
+    y,
     rotation: 0,
+    ...(shadowStyle ?? {}),
   };
 }
 

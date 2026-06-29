@@ -4,17 +4,44 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { validateImageFile } from "@/lib/imageValidation";
 import { useEditorHistory } from "@/hooks/useEditorHistory";
 import {
+  alignEditorLayer,
+  centerEditorLayer,
+  type LayerAlignment,
+} from "@/lib/konva/layerBounds";
+import {
+  fitLayerToCanvas,
+  getBlurPosterBackdropPlacement,
+  getComparisonSplitGeometry,
+  getQuickLayoutPlacements,
+  type QuickLayoutId,
+} from "@/lib/konva/quickLayouts";
+import { getScreenshotBackgroundPreset } from "@/lib/konva/screenshotBackgrounds";
+import {
+  buildAutoPaddingPlacement,
+  buildAutoPaddingStyle,
+  buildComparisonSplitLayers,
+  buildScreenshotMockup,
+  COMPARISON_LAYER_PREFIX,
+  FRAME_LAYER_PREFIX,
+  isAuxiliaryLayer,
+  type ScreenshotMockupId,
+} from "@/lib/konva/screenshotMockups";
+import {
   createImageLayer,
   createLayerId,
   createShapeLayer,
   createTextLayer,
+  DEFAULT_IMAGE_FILTERS,
+  DEFAULT_IMAGE_LAYER_STYLE,
   DEFAULT_STAGE_BACKGROUND,
   type EditorLayer,
   type EditorLayerUpdate,
+  type ImageEditorLayer,
   type LayerTransformUpdate,
   type ShapeKind,
   type StageBackground,
 } from "@/types/konvaEditor";
+import { createFullImageCrop } from "@/lib/konva/imageCrop";
 import type { UploadedImage } from "@/types/optimizer";
 
 export interface EditorDocumentState {
@@ -225,11 +252,12 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
           }
 
           if (layer.type === "image") {
-            const { filters, ...rest } = update;
+            const { filters, style, ...rest } = update;
             return {
               ...layer,
               ...rest,
               ...(filters ? { filters: { ...layer.filters, ...filters } } : {}),
+              ...(style ? { style: { ...layer.style, ...style } } : {}),
             };
           }
 
@@ -286,16 +314,31 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
         }
 
         const source = previous.layers[index];
-        const duplicate: EditorLayer = {
-          ...source,
-          id: createLayerId(),
-          name: source.name.includes("copy")
-            ? source.name
-            : `${source.name} copy`,
-          x: source.x + 24,
-          y: source.y + 24,
-          locked: false,
-        };
+        const duplicate: EditorLayer =
+          source.type === "image"
+            ? {
+                ...source,
+                id: createLayerId(),
+                name: source.name.includes("copy")
+                  ? source.name
+                  : `${source.name} copy`,
+                x: source.x + 24,
+                y: source.y + 24,
+                locked: false,
+                filters: { ...source.filters },
+                style: { ...source.style },
+                crop: source.crop ? { ...source.crop } : undefined,
+              }
+            : {
+                ...source,
+                id: createLayerId(),
+                name: source.name.includes("copy")
+                  ? source.name
+                  : `${source.name} copy`,
+                x: source.x + 24,
+                y: source.y + 24,
+                locked: false,
+              };
 
         const nextLayers = [...previous.layers];
         nextLayers.splice(index + 1, 0, duplicate);
@@ -381,6 +424,36 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
     notifyChange();
   }, [layers, notifyChange, releasePreviewUrl, resetHistory]);
 
+  const loadDocument = useCallback(
+    (nextDocument: EditorDocumentState) => {
+      const nextPreviewUrls = new Set(
+        nextDocument.layers
+          .filter((layer): layer is ImageEditorLayer => layer.type === "image")
+          .map((layer) => layer.image.previewUrl),
+      );
+
+      layers.forEach((layer) => {
+        if (
+          layer.type === "image" &&
+          !nextPreviewUrls.has(layer.image.previewUrl)
+        ) {
+          releasePreviewUrl(layer.image.previewUrl, nextDocument.layers);
+        }
+      });
+
+      nextDocument.layers.forEach((layer) => {
+        if (layer.type === "image") {
+          trackPreviewUrl(layer.image.previewUrl);
+        }
+      });
+
+      resetHistory(nextDocument);
+      setUploadError(null);
+      notifyChange();
+    },
+    [layers, notifyChange, releasePreviewUrl, resetHistory, trackPreviewUrl],
+  );
+
   const clearUploadError = useCallback(() => {
     setUploadError(null);
   }, []);
@@ -394,6 +467,490 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
     redo();
     notifyChange();
   }, [notifyChange, redo]);
+
+  const imageLayerCount = layers.filter((layer) => layer.type === "image").length;
+
+  const removeAuxiliaryLayers = useCallback(
+    (currentLayers: EditorLayer[], prefix: string) =>
+      currentLayers.filter((layer) => !isAuxiliaryLayer(layer, prefix)),
+    [],
+  );
+
+  const applyScreenshotMockup = useCallback(
+    (mockupId: ScreenshotMockupId, layerId?: string) => {
+      const imageLayers = layers.filter(
+        (layer): layer is ImageEditorLayer => layer.type === "image",
+      );
+
+      if (imageLayers.length === 0) {
+        return;
+      }
+
+      const target =
+        imageLayers.find((layer) => layer.id === layerId) ??
+        imageLayers[imageLayers.length - 1];
+      const result = buildScreenshotMockup(
+        mockupId,
+        target,
+        stageWidth,
+        stageHeight,
+      );
+      const [bodyLayer, ...remainingChrome] = result.frameLayers;
+      const screenLayer = remainingChrome.find((layer) =>
+        layer.name.includes("screen"),
+      );
+      const chromeLayers = remainingChrome.filter(
+        (layer) => layer !== screenLayer,
+      );
+
+      mutateDocument((previous) => {
+        let nextLayers = removeAuxiliaryLayers(
+          previous.layers,
+          FRAME_LAYER_PREFIX,
+        );
+        nextLayers = nextLayers.map((layer) => {
+          if (layer.id !== target.id || layer.type !== "image") {
+            return layer;
+          }
+
+          const { x, y, width, height } = result.screenshotPlacement;
+          const updatedLayer: ImageEditorLayer = {
+            ...layer,
+            x,
+            y,
+            width,
+            height,
+            rotation: 0,
+            style: {
+              ...layer.style,
+              ...result.screenshotStyle,
+            },
+          };
+
+          return updatedLayer;
+        });
+
+        const targetIndex = nextLayers.findIndex((layer) => layer.id === target.id);
+        if (targetIndex === -1 || !bodyLayer) {
+          return previous;
+        }
+
+        let insertIndex = targetIndex;
+        nextLayers.splice(insertIndex, 0, bodyLayer);
+        insertIndex += 1;
+
+        if (screenLayer) {
+          nextLayers.splice(insertIndex, 0, screenLayer);
+          insertIndex += 1;
+        }
+
+        nextLayers.splice(insertIndex + 1, 0, ...chromeLayers);
+
+        return {
+          ...previous,
+          layers: nextLayers,
+          selectedLayerId: target.id,
+          background: result.background
+            ? { ...previous.background, ...result.background }
+            : previous.background,
+        };
+      });
+    },
+    [layers, mutateDocument, removeAuxiliaryLayers, stageHeight, stageWidth],
+  );
+
+  const applyScreenshotBackground = useCallback(
+    (presetId: string) => {
+      const preset = getScreenshotBackgroundPreset(presetId);
+      if (!preset) {
+        return;
+      }
+
+      mutateDocument((previous) => ({
+        ...previous,
+        background: { ...preset.background },
+      }));
+    },
+    [mutateDocument],
+  );
+
+  const applyAutoPadding = useCallback(
+    (layerId?: string) => {
+      const imageLayers = layers.filter(
+        (layer): layer is ImageEditorLayer => layer.type === "image",
+      );
+
+      if (imageLayers.length === 0) {
+        return;
+      }
+
+      const target =
+        imageLayers.find((layer) => layer.id === layerId) ??
+        imageLayers[imageLayers.length - 1];
+      const placement = buildAutoPaddingPlacement(target, stageWidth, stageHeight);
+      const style = buildAutoPaddingStyle(stageWidth, stageHeight);
+
+      mutateDocument((previous) => ({
+        ...previous,
+        layers: previous.layers.map((layer) => {
+          if (layer.id !== target.id || layer.type !== "image") {
+            return layer;
+          }
+
+          const { x, y, width, height } = placement;
+          const updatedLayer: ImageEditorLayer = {
+            ...layer,
+            x,
+            y,
+            width,
+            height,
+            rotation: 0,
+            style: {
+              ...layer.style,
+              ...style,
+            },
+          };
+
+          return updatedLayer;
+        }),
+        selectedLayerId: target.id,
+        background: {
+          ...previous.background,
+          transparent: false,
+          fillType: "solid",
+          color: "#f5f5f7",
+        },
+      }));
+    },
+    [layers, mutateDocument, stageHeight, stageWidth],
+  );
+
+  const applyQuickLayout = useCallback(
+    (layoutId: QuickLayoutId) => {
+      const imageLayers = layers.filter(
+        (layer): layer is ImageEditorLayer => layer.type === "image",
+      );
+
+      if (layoutId === "blur-poster") {
+        if (imageLayers.length === 0) {
+          return;
+        }
+
+        const foreground = imageLayers[imageLayers.length - 1];
+        const foregroundPlacement = getQuickLayoutPlacements(
+          layoutId,
+          [foreground],
+          stageWidth,
+          stageHeight,
+        ).get(foreground.id);
+
+        mutateDocument((previous) => {
+          const backdropSource = foreground;
+          const backdropPlacement = getBlurPosterBackdropPlacement(
+            backdropSource,
+            stageWidth,
+            stageHeight,
+          );
+
+          const backdrop: ImageEditorLayer = {
+            ...backdropSource,
+            id: createLayerId(),
+            name: `${backdropSource.name} background`,
+            locked: true,
+            x: backdropPlacement.x,
+            y: backdropPlacement.y,
+            width: backdropPlacement.width,
+            height: backdropPlacement.height,
+            rotation: 0,
+            filters: {
+              ...DEFAULT_IMAGE_FILTERS,
+              ...backdropPlacement.filters,
+            },
+            style: { ...DEFAULT_IMAGE_LAYER_STYLE },
+          };
+
+          const layersWithoutBackdrop = previous.layers.filter(
+            (layer) =>
+              !(
+                layer.type === "image" && layer.name.endsWith(" background")
+              ),
+          );
+
+          const nextLayers = layersWithoutBackdrop.map((layer) => {
+            if (layer.id !== foreground.id || layer.type !== "image") {
+              return layer;
+            }
+
+            if (!foregroundPlacement) {
+              return layer;
+            }
+
+            return {
+              ...layer,
+              ...foregroundPlacement,
+              filters: {
+                ...layer.filters,
+                ...(foregroundPlacement.filters ?? {}),
+              },
+            };
+          });
+
+          const foregroundIndex = nextLayers.findIndex(
+            (layer) => layer.id === foreground.id,
+          );
+          if (foregroundIndex === -1) {
+            return previous;
+          }
+
+          nextLayers.splice(foregroundIndex, 0, backdrop);
+
+          return {
+            ...previous,
+            layers: nextLayers,
+            selectedLayerId: foreground.id,
+          };
+        });
+        return;
+      }
+
+      if (
+        layoutId === "comparison-split" ||
+        layoutId === "before-after-collage"
+      ) {
+        if (imageLayers.length < 2) {
+          return;
+        }
+
+        const placements = getQuickLayoutPlacements(
+          layoutId,
+          imageLayers,
+          stageWidth,
+          stageHeight,
+        );
+        const geometry = getComparisonSplitGeometry(stageWidth, stageHeight);
+        const comparisonLayers = buildComparisonSplitLayers(
+          geometry.leftCell,
+          geometry.rightCell,
+          stageWidth,
+          stageHeight,
+          true,
+        );
+
+        mutateDocument((previous) => {
+          let nextLayers = removeAuxiliaryLayers(
+            previous.layers,
+            COMPARISON_LAYER_PREFIX,
+          );
+          nextLayers = nextLayers.map((layer) => {
+            if (layer.type !== "image") {
+              return layer;
+            }
+
+            const placement = placements.get(layer.id);
+            if (!placement) {
+              return layer;
+            }
+
+            return {
+              ...layer,
+              x: placement.x,
+              y: placement.y,
+              width: placement.width,
+              height: placement.height,
+              rotation: 0,
+              filters: {
+                ...layer.filters,
+                ...(placement.filters ?? {}),
+              },
+            };
+          });
+
+          return {
+            ...previous,
+            layers: [...nextLayers, ...comparisonLayers],
+            background: {
+              ...previous.background,
+              transparent: false,
+              fillType: "solid",
+              color: "#111111",
+            },
+          };
+        });
+        return;
+      }
+
+      if (layoutId === "auto-padding") {
+        if (imageLayers.length === 0) {
+          return;
+        }
+
+        const target = imageLayers[imageLayers.length - 1];
+        const placement = buildAutoPaddingPlacement(
+          target,
+          stageWidth,
+          stageHeight,
+        );
+        const style = buildAutoPaddingStyle(stageWidth, stageHeight);
+
+        mutateDocument((previous) => ({
+          ...previous,
+          layers: previous.layers.map((layer) => {
+            if (layer.id !== target.id || layer.type !== "image") {
+              return layer;
+            }
+
+            const { x, y, width, height } = placement;
+            const updatedLayer: ImageEditorLayer = {
+              ...layer,
+              x,
+              y,
+              width,
+              height,
+              rotation: 0,
+              style: {
+                ...layer.style,
+                ...style,
+              },
+            };
+
+            return updatedLayer;
+          }),
+          selectedLayerId: target.id,
+          background: {
+            ...previous.background,
+            transparent: false,
+            fillType: "linear",
+            color: "#f5f5f7",
+            gradientAngle: 180,
+            gradientStops: [
+              { offset: 0, color: "#ffffff" },
+              { offset: 1, color: "#f5f5f7" },
+            ],
+          },
+        }));
+        return;
+      }
+
+      const placements = getQuickLayoutPlacements(
+        layoutId,
+        imageLayers,
+        stageWidth,
+        stageHeight,
+      );
+
+      mutateDocument((previous) => ({
+        ...previous,
+        layers: previous.layers.map((layer) => {
+          if (layer.type !== "image") {
+            return layer;
+          }
+
+          const placement = placements.get(layer.id);
+          if (!placement) {
+            return layer;
+          }
+
+          return {
+            ...layer,
+            x: placement.x,
+            y: placement.y,
+            width: placement.width,
+            height: placement.height,
+            rotation: 0,
+            filters: {
+              ...layer.filters,
+              ...(placement.filters ?? {}),
+            },
+          };
+        }),
+      }));
+    },
+    [layers, mutateDocument, removeAuxiliaryLayers, stageHeight, stageWidth],
+  );
+
+  const centerLayer = useCallback(
+    (layerId: string) => {
+      const layer = layers.find((item) => item.id === layerId);
+      if (!layer) {
+        return;
+      }
+
+      const placement = centerEditorLayer(layer, stageWidth, stageHeight);
+      updateLayer(layerId, placement);
+    },
+    [layers, stageHeight, stageWidth, updateLayer],
+  );
+
+  const fitLayerToCanvasMode = useCallback(
+    (layerId: string, mode: "contain" | "cover") => {
+      const layer = layers.find((item) => item.id === layerId);
+      if (!layer || layer.type !== "image") {
+        return;
+      }
+
+      const placement = fitLayerToCanvas(layer, stageWidth, stageHeight, mode);
+      updateLayer(layerId, placement);
+    },
+    [layers, stageHeight, stageWidth, updateLayer],
+  );
+
+  const resetLayerEffects = useCallback(
+    (layerId: string) => {
+      const layer = layers.find((item) => item.id === layerId);
+      if (!layer || layer.type !== "image") {
+        return;
+      }
+
+      updateLayerProperties(layerId, {
+        filters: { ...DEFAULT_IMAGE_FILTERS },
+        style: { ...DEFAULT_IMAGE_LAYER_STYLE },
+        crop: createFullImageCrop(layer.image.width, layer.image.height),
+      });
+    },
+    [layers, updateLayerProperties],
+  );
+
+  const resetLayerCrop = useCallback(
+    (layerId: string) => {
+      const layer = layers.find((item) => item.id === layerId);
+      if (!layer || layer.type !== "image") {
+        return;
+      }
+
+      updateLayerProperties(layerId, {
+        crop: createFullImageCrop(layer.image.width, layer.image.height),
+      });
+    },
+    [layers, updateLayerProperties],
+  );
+
+  const alignLayer = useCallback(
+    (layerId: string, alignment: LayerAlignment) => {
+      const layer = layers.find((item) => item.id === layerId);
+      if (!layer) {
+        return;
+      }
+
+      const placement = alignEditorLayer(
+        layer,
+        alignment,
+        stageWidth,
+        stageHeight,
+      );
+      updateLayer(layerId, placement);
+    },
+    [layers, stageHeight, stageWidth, updateLayer],
+  );
+
+  const setBackground = useCallback(
+    (nextBackground: StageBackground) => {
+      mutateDocument((previous) => ({
+        ...previous,
+        background: nextBackground,
+      }));
+    },
+    [mutateDocument],
+  );
 
   const hasLayers = layers.length > 0;
   const showCanvas = hasLayers || !background.transparent;
@@ -412,21 +969,33 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
     canExport,
     canUndo,
     canRedo,
+    imageLayerCount,
     addLayerFromFile,
     addTextLayer,
     addShapeLayer,
+    applyQuickLayout,
+    applyScreenshotMockup,
+    applyScreenshotBackground,
+    applyAutoPadding,
     selectLayer,
     updateLayer,
     updateLayerProperties,
     deleteLayer,
     deleteSelectedLayer,
     duplicateLayer,
+    centerLayer,
+    alignLayer,
+    fitLayerToCanvasMode,
+    resetLayerEffects,
+    resetLayerCrop,
+    setBackground,
     moveLayerUp: (layerId: string) => moveLayer(layerId, "up"),
     moveLayerDown: (layerId: string) => moveLayer(layerId, "down"),
     toggleLayerLock,
     toggleLayerVisibility,
     updateBackground,
     resetLayers,
+    loadDocument,
     clearUploadError,
     undo: handleUndo,
     redo: handleRedo,

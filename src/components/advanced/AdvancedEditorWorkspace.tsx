@@ -1,18 +1,33 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { AddLayerUpload } from "@/components/advanced/AddLayerUpload";
+import { useCallback, useRef, useState } from "react";
+import {
+  AddLayerUpload,
+  type AddLayerUploadHandle,
+} from "@/components/advanced/AddLayerUpload";
 import { AdvancedExportPanel } from "@/components/advanced/AdvancedExportPanel";
 import { EditorControlsPanel } from "@/components/advanced/EditorControlsPanel";
+import { EditorEmptyState } from "@/components/advanced/EditorEmptyState";
 import { EditorToolbar } from "@/components/advanced/EditorToolbar";
+import { LayerAlignmentControls } from "@/components/advanced/LayerAlignmentControls";
 import { LayerPanel } from "@/components/advanced/LayerPanel";
+import { LayerQuickActions } from "@/components/advanced/LayerQuickActions";
+import type { LayerContextMenuItem } from "@/components/advanced/LayerContextMenu";
+import { ProjectPanel } from "@/components/advanced/ProjectPanel";
+import { QuickLayoutPanel } from "@/components/advanced/QuickLayoutPanel";
+import { ScreenshotToolsPanel } from "@/components/advanced/ScreenshotToolsPanel";
+import { TemplateGallery } from "@/components/advanced/TemplateGallery";
 import { DownloadButton } from "@/components/optimizer/DownloadButton";
 import { ExportSuccessAlert } from "@/components/optimizer/ExportSuccessAlert";
 import { ResetButton } from "@/components/optimizer/ResetButton";
 import { UploadErrorAlert } from "@/components/optimizer/UploadErrorAlert";
-import { WorkspaceEmptyState } from "@/components/optimizer/WorkspaceEmptyState";
 import { useAdvancedEditor } from "@/hooks/useAdvancedEditor";
 import { useEditorKeyboardShortcuts } from "@/hooks/useEditorKeyboardShortcuts";
+import type { LayerAlignment } from "@/lib/konva/layerBounds";
+import type { QuickLayoutId } from "@/lib/konva/quickLayouts";
+import type { ScreenshotMockupId } from "@/lib/konva/screenshotMockups";
+import type { ImageSourceCrop } from "@/types/konvaEditor";
 
 const KonvaEditorStage = dynamic(
   () =>
@@ -31,6 +46,12 @@ const KonvaEditorStage = dynamic(
 
 export function AdvancedEditorWorkspace() {
   const editor = useAdvancedEditor();
+  const uploadRef = useRef<AddLayerUploadHandle>(null);
+  const [cropEditingLayerId, setCropEditingLayerId] = useState<string | null>(
+    null,
+  );
+  const activeCropEditingLayerId =
+    cropEditingLayerId === editor.selectedLayerId ? cropEditingLayerId : null;
 
   useEditorKeyboardShortcuts({
     enabled: editor.showCanvas,
@@ -38,6 +59,72 @@ export function AdvancedEditorWorkspace() {
     onUndo: editor.undo,
     onRedo: editor.redo,
   });
+
+  const handleSelectedLayerAction = (
+    action: (layerId: string) => void,
+  ) => {
+    if (!editor.selectedLayerId) {
+      return;
+    }
+
+    action(editor.selectedLayerId);
+  };
+
+  const getLayerContextMenuItems = useCallback(
+    (layerId: string): LayerContextMenuItem[] => {
+      const layer = editor.layers.find((item) => item.id === layerId);
+      const isImage = layer?.type === "image";
+
+      return [
+        {
+          id: "duplicate",
+          label: "Duplicate",
+          onClick: () => editor.duplicateLayer(layerId),
+        },
+        {
+          id: "forward",
+          label: "Bring forward",
+          onClick: () => editor.moveLayerUp(layerId),
+        },
+        {
+          id: "backward",
+          label: "Send backward",
+          onClick: () => editor.moveLayerDown(layerId),
+        },
+        {
+          id: "center",
+          label: "Center",
+          onClick: () => editor.centerLayer(layerId),
+        },
+        ...(isImage
+          ? [
+              {
+                id: "fit",
+                label: "Fit to canvas",
+                onClick: () => editor.fitLayerToCanvasMode(layerId, "contain"),
+              },
+              {
+                id: "fill",
+                label: "Fill canvas",
+                onClick: () => editor.fitLayerToCanvasMode(layerId, "cover"),
+              },
+              {
+                id: "reset",
+                label: "Reset effects",
+                onClick: () => editor.resetLayerEffects(layerId),
+              },
+            ]
+          : []),
+        {
+          id: "delete",
+          label: "Delete",
+          onClick: () => editor.deleteLayer(layerId),
+          destructive: true,
+        },
+      ];
+    },
+    [editor],
+  );
 
   return (
     <>
@@ -62,6 +149,13 @@ export function AdvancedEditorWorkspace() {
               filename={editor.exportSuccess.filename}
               size={editor.exportSuccess.size}
               onDismiss={editor.clearExportSuccess}
+            />
+          ) : null}
+
+          {editor.projectError ? (
+            <UploadErrorAlert
+              message={editor.projectError}
+              onDismiss={editor.clearProjectError}
             />
           ) : null}
 
@@ -93,6 +187,11 @@ export function AdvancedEditorWorkspace() {
                   onSelectLayer={editor.selectLayer}
                   onLayerChange={editor.updateLayer}
                   onStageRef={editor.setStageRef}
+                  getContextMenuItems={getLayerContextMenuItems}
+                  cropEditingLayerId={activeCropEditingLayerId}
+                  onCropChange={(layerId: string, crop: ImageSourceCrop) => {
+                    editor.updateLayerProperties(layerId, { crop }, false);
+                  }}
                 />
 
                 {editor.isExporting ? (
@@ -106,12 +205,16 @@ export function AdvancedEditorWorkspace() {
             </div>
           ) : (
             <div className="order-1">
-              <WorkspaceEmptyState />
+              <EditorEmptyState
+                onSelectTemplate={editor.applyTemplate}
+                onUploadClick={() => uploadRef.current?.openFilePicker()}
+              />
             </div>
           )}
 
           <div className="order-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
             <AddLayerUpload
+              ref={uploadRef}
               onFileSelect={(file) => {
                 void editor.addLayerFromFile(file);
               }}
@@ -127,9 +230,69 @@ export function AdvancedEditorWorkspace() {
               canRedo={editor.canRedo}
             />
           </div>
+
+          {editor.showCanvas ? (
+            <div className="order-3 lg:hidden">
+              <QuickLayoutPanel
+                imageLayerCount={editor.imageLayerCount}
+                onApplyLayout={(layoutId: QuickLayoutId) => {
+                  editor.applyQuickLayout(layoutId);
+                }}
+              />
+              <div className="mt-4">
+                <ScreenshotToolsPanel
+                  imageLayerCount={editor.imageLayerCount}
+                  selectedImageLayerId={
+                    editor.selectedLayer?.type === "image"
+                      ? editor.selectedLayer.id
+                      : null
+                  }
+                  onApplyMockup={(mockupId: ScreenshotMockupId, layerId) => {
+                    editor.applyScreenshotMockup(mockupId, layerId);
+                  }}
+                  onApplyAutoPadding={(layerId) => {
+                    editor.applyAutoPadding(layerId);
+                  }}
+                  onApplyBackground={(presetId) => {
+                    editor.applyScreenshotBackground(presetId);
+                  }}
+                  onApplyLayout={(layoutId: QuickLayoutId) => {
+                    editor.applyQuickLayout(layoutId);
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:self-start">
+        <div className="flex min-w-0 flex-col gap-4 pb-36 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:self-start lg:pb-0">
+          <ProjectPanel
+            activeProjectName={editor.activeProjectName}
+            savedProjects={editor.savedProjects}
+            isBusy={editor.isProjectBusy}
+            onActiveProjectNameChange={editor.setActiveProjectName}
+            onSaveProject={() => {
+              void editor.saveCurrentProject();
+            }}
+            onOpenProject={(projectId) => {
+              void editor.openSavedProject(projectId);
+            }}
+            onRenameProject={(projectId, name) => {
+              void editor.renameProject(projectId, name);
+            }}
+            onDeleteProject={editor.removeProject}
+            onExportProjectJson={() => {
+              void editor.exportCurrentProjectJson();
+            }}
+            onImportProjectJson={(file) => {
+              void editor.importProjectJson(file);
+            }}
+          />
+
+          {editor.showCanvas ? (
+            <TemplateGallery onSelectTemplate={editor.applyTemplate} />
+          ) : null}
+
           <LayerPanel
             layers={editor.layers}
             selectedLayerId={editor.selectedLayerId}
@@ -142,12 +305,95 @@ export function AdvancedEditorWorkspace() {
             onToggleVisibility={editor.toggleLayerVisibility}
           />
 
+          <LayerQuickActions
+            selectedLayer={editor.selectedLayer}
+            onCenter={() => {
+              handleSelectedLayerAction(editor.centerLayer);
+            }}
+            onFitToCanvas={() => {
+              handleSelectedLayerAction((layerId) => {
+                editor.fitLayerToCanvasMode(layerId, "contain");
+              });
+            }}
+            onFillCanvas={() => {
+              handleSelectedLayerAction((layerId) => {
+                editor.fitLayerToCanvasMode(layerId, "cover");
+              });
+            }}
+            onDuplicate={() => {
+              handleSelectedLayerAction(editor.duplicateLayer);
+            }}
+            onBringForward={() => {
+              handleSelectedLayerAction(editor.moveLayerUp);
+            }}
+            onSendBackward={() => {
+              handleSelectedLayerAction(editor.moveLayerDown);
+            }}
+            onResetEffects={() => {
+              handleSelectedLayerAction(editor.resetLayerEffects);
+            }}
+          />
+
+          <LayerAlignmentControls
+            disabled={!editor.selectedLayer}
+            onAlign={(alignment: LayerAlignment) => {
+              handleSelectedLayerAction((layerId) => {
+                editor.alignLayer(layerId, alignment);
+              });
+            }}
+          />
+
+          {editor.showCanvas ? (
+            <div className="hidden lg:block space-y-4">
+              <ScreenshotToolsPanel
+                imageLayerCount={editor.imageLayerCount}
+                selectedImageLayerId={
+                  editor.selectedLayer?.type === "image"
+                    ? editor.selectedLayer.id
+                    : null
+                }
+                onApplyMockup={(mockupId: ScreenshotMockupId, layerId) => {
+                  editor.applyScreenshotMockup(mockupId, layerId);
+                }}
+                onApplyAutoPadding={(layerId) => {
+                  editor.applyAutoPadding(layerId);
+                }}
+                onApplyBackground={(presetId) => {
+                  editor.applyScreenshotBackground(presetId);
+                }}
+                onApplyLayout={(layoutId: QuickLayoutId) => {
+                  editor.applyQuickLayout(layoutId);
+                }}
+              />
+              <QuickLayoutPanel
+                imageLayerCount={editor.imageLayerCount}
+                onApplyLayout={(layoutId: QuickLayoutId) => {
+                  editor.applyQuickLayout(layoutId);
+                }}
+              />
+            </div>
+          ) : null}
+
           <EditorControlsPanel
             selectedLayer={editor.selectedLayer}
             background={editor.background}
+            cropEditingLayerId={activeCropEditingLayerId}
             onUpdateLayer={editor.updateLayerProperties}
             onUpdateBackground={editor.updateBackground}
             onHistoryCheckpoint={editor.checkpointHistory}
+            onStartCropEdit={(layerId) => {
+              editor.selectLayer(layerId);
+              editor.checkpointHistory();
+              setCropEditingLayerId(layerId);
+            }}
+            onFinishCropEdit={() => {
+              editor.checkpointHistory();
+              setCropEditingLayerId(null);
+            }}
+            onResetCrop={(layerId) => {
+              editor.resetLayerCrop(layerId);
+              setCropEditingLayerId(null);
+            }}
           />
 
           <AdvancedExportPanel

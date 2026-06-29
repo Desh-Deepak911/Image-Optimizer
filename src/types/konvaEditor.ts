@@ -40,7 +40,49 @@ export const DEFAULT_ADVANCED_EDITOR_SETTINGS: AdvancedEditorSettings = {
 
 export type EditorLayerType = "image" | "text" | "shape";
 
-export type ShapeKind = "rectangle" | "circle" | "line";
+export type ShapeKind =
+  | "rectangle"
+  | "circle"
+  | "line"
+  | "arrow"
+  | "freehand"
+  | "highlighter";
+
+export type EditorToolId =
+  | "select"
+  | "line"
+  | "arrow"
+  | "freehand"
+  | "highlighter"
+  | "label"
+  | "speech-bubble"
+  | "numbered-marker";
+
+export type CalloutKind = "label" | "speech-bubble" | "numbered-marker";
+
+export interface DrawingToolSettings {
+  strokeColor: string;
+  strokeWidth: number;
+  opacity: number;
+  dashed: boolean;
+  arrowHeadSize: number;
+  highlighterOpacity: number;
+  freehandTension: number;
+  calloutFill: string;
+  calloutTextColor: string;
+}
+
+export const DEFAULT_DRAWING_TOOL_SETTINGS: DrawingToolSettings = {
+  strokeColor: "#1d1d1f",
+  strokeWidth: 4,
+  opacity: 1,
+  dashed: false,
+  arrowHeadSize: 14,
+  highlighterOpacity: 0.4,
+  freehandTension: 0.45,
+  calloutFill: "#ffffff",
+  calloutTextColor: "#1d1d1f",
+};
 
 export interface ImageFilters {
   brightness: number;
@@ -140,12 +182,28 @@ export interface ImageEditorLayer extends BaseEditorLayer {
   cleanupStrokes?: CleanupBrushStroke[];
 }
 
+export type TextAlign = "left" | "center" | "right";
+
+export type TextFontStyle = "normal" | "bold" | "italic" | "bold italic";
+
+export const DEFAULT_TEXT_FONT_FAMILY =
+  'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+export const TEXT_FONT_FAMILY_OPTIONS = [
+  { value: DEFAULT_TEXT_FONT_FAMILY, label: "Sans serif" },
+  { value: 'Georgia, "Times New Roman", serif', label: "Serif" },
+  { value: '"Courier New", Courier, monospace', label: "Monospace" },
+] as const;
+
 export interface TextEditorLayer extends BaseEditorLayer {
   type: "text";
   text: string;
   fontSize: number;
   fill: string;
   width: number;
+  fontFamily?: string;
+  fontStyle?: TextFontStyle;
+  align?: TextAlign;
 }
 
 export interface ShapeEditorLayer extends BaseEditorLayer {
@@ -155,6 +213,12 @@ export interface ShapeEditorLayer extends BaseEditorLayer {
   width: number;
   height: number;
   strokeWidth: number;
+  strokeColor?: string;
+  points?: number[];
+  dashed?: boolean;
+  arrowHeadSize?: number;
+  tension?: number;
+  blendMode?: "normal" | "multiply";
   cornerRadius?: number;
   shadowBlur?: number;
   shadowColor?: string;
@@ -162,7 +226,24 @@ export interface ShapeEditorLayer extends BaseEditorLayer {
   shadowOpacity?: number;
 }
 
-export type EditorLayer = ImageEditorLayer | TextEditorLayer | ShapeEditorLayer;
+export interface CalloutEditorLayer extends BaseEditorLayer {
+  type: "callout";
+  calloutType: CalloutKind;
+  text: string;
+  width: number;
+  height: number;
+  fill: string;
+  textColor: string;
+  fontSize: number;
+  markerNumber?: number;
+  cornerRadius?: number;
+}
+
+export type EditorLayer =
+  | ImageEditorLayer
+  | TextEditorLayer
+  | ShapeEditorLayer
+  | CalloutEditorLayer;
 
 export interface AdvancedEditorDocument {
   settings: OptimizerSettings;
@@ -180,6 +261,7 @@ export interface LayerTransformUpdate {
   height?: number;
   rotation?: number;
   fontSize?: number;
+  points?: number[];
 }
 
 export type EditorLayerUpdate = Partial<
@@ -188,7 +270,8 @@ export type EditorLayerUpdate = Partial<
     "id" | "type" | "image" | "filters" | "style" | "cleanupStrokes"
   > &
     Omit<TextEditorLayer, "id" | "type"> &
-    Omit<ShapeEditorLayer, "id" | "type">
+    Omit<ShapeEditorLayer, "id" | "type"> &
+    Omit<CalloutEditorLayer, "id" | "type">
 > & {
   filters?: Partial<ImageFilters>;
   style?: Partial<ImageLayerStyle>;
@@ -334,6 +417,9 @@ export function createTextLayerAt({
     text,
     fontSize,
     fill,
+    fontFamily: DEFAULT_TEXT_FONT_FAMILY,
+    fontStyle: "normal",
+    align: "left",
     visible: true,
     locked,
     opacity: 1,
@@ -350,16 +436,21 @@ export function createShapeLayer(
   stageHeight: number,
   layerIndex: number,
 ): ShapeEditorLayer {
-  const defaults: Record<
-    ShapeKind,
-    { width: number; height: number; name: string; fill: string }
+  const defaults: Partial<
+    Record<
+      ShapeKind,
+      { width: number; height: number; name: string; fill: string }
+    >
   > = {
     rectangle: { width: 240, height: 160, name: "Rectangle", fill: "#0071e3" },
     circle: { width: 180, height: 180, name: "Circle", fill: "#34c759" },
-    line: { width: 220, height: 0, name: "Line", fill: "#1d1d1f" },
+    line: { width: 220, height: 120, name: "Line", fill: "#1d1d1f" },
+    arrow: { width: 220, height: 120, name: "Arrow", fill: "#1d1d1f" },
+    freehand: { width: 1, height: 1, name: "Drawing", fill: "#1d1d1f" },
+    highlighter: { width: 1, height: 1, name: "Highlight", fill: "#ffd60a" },
   };
 
-  const config = defaults[shape];
+  const config = defaults[shape] ?? defaults.line!;
   const offset = layerIndex * 16;
 
   return createShapeLayerAt({
@@ -370,8 +461,132 @@ export function createShapeLayer(
     height: config.height,
     x: (stageWidth - config.width) / 2 + offset,
     y: (stageHeight - config.height) / 2 + offset,
-    strokeWidth: shape === "line" ? 4 : 0,
+    strokeWidth: shape === "line" || shape === "arrow" ? 4 : 0,
+    ...(shape === "line" || shape === "arrow"
+      ? { points: [0, 0, config.width, config.height] }
+      : {}),
+    ...(shape === "highlighter"
+      ? { blendMode: "multiply" as const, opacity: 0.4, strokeWidth: 18 }
+      : {}),
+    ...(shape === "freehand" ? { strokeWidth: 4, tension: 0.45 } : {}),
+    ...(shape === "arrow" ? { arrowHeadSize: 14 } : {}),
   });
+}
+
+export function createVectorShapeLayer({
+  shape,
+  x,
+  y,
+  width,
+  height,
+  points,
+  settings,
+  layerIndex,
+}: {
+  shape: Extract<ShapeKind, "line" | "arrow" | "freehand" | "highlighter">;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  points: number[];
+  settings: DrawingToolSettings;
+  layerIndex: number;
+}): ShapeEditorLayer {
+  const names: Record<typeof shape, string> = {
+    line: "Line",
+    arrow: "Arrow",
+    freehand: "Drawing",
+    highlighter: "Highlight",
+  };
+
+  const fill =
+    shape === "highlighter" ? "#ffd60a" : settings.strokeColor;
+
+  return {
+    id: createLayerId(),
+    type: "shape",
+    shape,
+    name: `${names[shape]} ${layerIndex + 1}`,
+    fill,
+    strokeColor: settings.strokeColor,
+    strokeWidth:
+      shape === "highlighter"
+        ? Math.max(settings.strokeWidth * 3, 12)
+        : settings.strokeWidth,
+    dashed: settings.dashed,
+    points,
+    width,
+    height,
+    x,
+    y,
+    rotation: 0,
+    visible: true,
+    locked: false,
+    opacity: shape === "highlighter" ? settings.highlighterOpacity : settings.opacity,
+    ...(shape === "arrow" ? { arrowHeadSize: settings.arrowHeadSize } : {}),
+    ...(shape === "freehand" || shape === "highlighter"
+      ? { tension: settings.freehandTension }
+      : {}),
+    ...(shape === "highlighter" ? { blendMode: "multiply" as const } : {}),
+  };
+}
+
+export function createCalloutLayer({
+  calloutType,
+  x,
+  y,
+  width,
+  height,
+  settings,
+  layerIndex,
+  markerNumber,
+}: {
+  calloutType: CalloutKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  settings: DrawingToolSettings;
+  layerIndex: number;
+  markerNumber?: number;
+}): CalloutEditorLayer {
+  const labels: Record<CalloutKind, string> = {
+    label: "Label",
+    "speech-bubble": "Bubble",
+    "numbered-marker": "Marker",
+  };
+
+  const defaultText =
+    calloutType === "numbered-marker"
+      ? String(markerNumber ?? layerIndex + 1)
+      : calloutType === "label"
+        ? "Label"
+        : "Note";
+
+  const size =
+    calloutType === "numbered-marker"
+      ? { width: Math.max(width, 44), height: Math.max(height, 44) }
+      : { width, height };
+
+  return {
+    id: createLayerId(),
+    type: "callout",
+    calloutType,
+    name: `${labels[calloutType]} ${layerIndex + 1}`,
+    text: defaultText,
+    fill: settings.calloutFill,
+    textColor: settings.calloutTextColor,
+    fontSize: calloutType === "numbered-marker" ? 18 : 16,
+    markerNumber,
+    cornerRadius: calloutType === "label" ? 999 : 12,
+    visible: true,
+    locked: false,
+    opacity: 1,
+    x,
+    y,
+    rotation: 0,
+    ...size,
+  };
 }
 
 export function createShapeLayerAt({
@@ -386,6 +601,13 @@ export function createShapeLayerAt({
   locked = false,
   cornerRadius,
   shadowStyle,
+  points,
+  dashed,
+  arrowHeadSize,
+  tension,
+  blendMode,
+  opacity = 1,
+  strokeColor,
 }: {
   shape: ShapeKind;
   x: number;
@@ -403,6 +625,13 @@ export function createShapeLayerAt({
     shadowOffsetY: number;
     shadowOpacity: number;
   };
+  points?: number[];
+  dashed?: boolean;
+  arrowHeadSize?: number;
+  tension?: number;
+  blendMode?: "normal" | "multiply";
+  opacity?: number;
+  strokeColor?: string;
 }): ShapeEditorLayer {
   return {
     id: createLayerId(),
@@ -413,7 +642,7 @@ export function createShapeLayerAt({
     strokeWidth,
     visible: true,
     locked,
-    opacity: 1,
+    opacity,
     width,
     height,
     x,
@@ -421,6 +650,12 @@ export function createShapeLayerAt({
     rotation: 0,
     ...(cornerRadius !== undefined ? { cornerRadius } : {}),
     ...(shadowStyle ?? {}),
+    ...(points !== undefined ? { points } : {}),
+    ...(dashed !== undefined ? { dashed } : {}),
+    ...(arrowHeadSize !== undefined ? { arrowHeadSize } : {}),
+    ...(tension !== undefined ? { tension } : {}),
+    ...(blendMode !== undefined ? { blendMode } : {}),
+    ...(strokeColor !== undefined ? { strokeColor } : {}),
   };
 }
 
@@ -463,15 +698,39 @@ export function isCoverPatchLayer(layer: EditorLayer): boolean {
   );
 }
 
+export function isVectorShape(layer: EditorLayer): layer is ShapeEditorLayer {
+  return (
+    layer.type === "shape" &&
+    (layer.shape === "line" ||
+      layer.shape === "arrow" ||
+      layer.shape === "freehand" ||
+      layer.shape === "highlighter")
+  );
+}
+
 export function getLayerTypeLabel(layer: EditorLayer): string {
   switch (layer.type) {
     case "image":
       return "Image";
     case "text":
       return "Text";
+    case "callout":
+      if (layer.calloutType === "numbered-marker") {
+        return "Marker";
+      }
+      if (layer.calloutType === "speech-bubble") {
+        return "Bubble";
+      }
+      return "Label";
     case "shape":
       if (isCoverPatchLayer(layer)) {
         return "Cover";
+      }
+      if (layer.shape === "freehand") {
+        return "Draw";
+      }
+      if (layer.shape === "highlighter") {
+        return "Highlight";
       }
       return layer.shape.charAt(0).toUpperCase() + layer.shape.slice(1);
   }

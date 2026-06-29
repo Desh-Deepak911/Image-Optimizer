@@ -7,6 +7,7 @@ interface UseEditorKeyboardShortcutsOptions {
   onDeleteSelected: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  onEscape?: () => void;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -28,6 +29,7 @@ export function useEditorKeyboardShortcuts({
   onDeleteSelected,
   onUndo,
   onRedo,
+  onEscape,
 }: UseEditorKeyboardShortcutsOptions) {
   useEffect(() => {
     if (!enabled) {
@@ -53,6 +55,12 @@ export function useEditorKeyboardShortcuts({
         return;
       }
 
+      if (event.key === "Escape" && onEscape) {
+        event.preventDefault();
+        onEscape();
+        return;
+      }
+
       if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
         onDeleteSelected();
@@ -63,5 +71,5 @@ export function useEditorKeyboardShortcuts({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [enabled, onDeleteSelected, onRedo, onUndo]);
+  }, [enabled, onDeleteSelected, onEscape, onRedo, onUndo]);
 }

@@ -17,14 +17,21 @@ import {
 } from "@/lib/konva/exportKonvaStage";
 import type Konva from "konva";
 import { getEditorTemplate } from "@/lib/konva/editorTemplates";
-import type { AdvancedEditorSettings, CleanupToolId } from "@/types/konvaEditor";
+import type { AdvancedEditorSettings, CleanupToolId, EditorToolId } from "@/types/konvaEditor";
+import {
+  DEFAULT_DRAWING_TOOL_SETTINGS,
+} from "@/types/konvaEditor";
 import type { EditorDocumentState } from "@/hooks/useKonvaLayers";
 
 export function useAdvancedEditor() {
   const stageRef = useRef<Konva.Stage | null>(null);
   const [cleanupTool, setCleanupTool] = useState<CleanupToolId>("select");
+  const [editorTool, setEditorTool] = useState<EditorToolId>("select");
   const [brushSize, setBrushSize] = useState(DEFAULT_CLEANUP_BRUSH_SIZE);
   const [brushIntensity, setBrushIntensity] = useState(DEFAULT_BLUR_INTENSITY);
+  const [drawingSettings, setDrawingSettings] = useState({
+    ...DEFAULT_DRAWING_TOOL_SETTINGS,
+  });
 
   const {
     exportError,
@@ -160,17 +167,44 @@ export function useAdvancedEditor() {
     resetExportState();
     projects.markProjectUntitled();
     setCleanupTool("select");
+    setEditorTool("select");
     setBrushSize(DEFAULT_CLEANUP_BRUSH_SIZE);
     setBrushIntensity(DEFAULT_BLUR_INTENSITY);
+    setDrawingSettings({ ...DEFAULT_DRAWING_TOOL_SETTINGS });
   }, [layersState, projects, resetExportState, resetSettings]);
 
   const handleCleanupToolChange = useCallback((tool: CleanupToolId) => {
     setCleanupTool(tool);
+    if (tool !== "select") {
+      setEditorTool("select");
+    }
     if (tool === "blur-brush") {
       setBrushIntensity(DEFAULT_BLUR_INTENSITY);
     } else if (tool === "pixelate-brush") {
       setBrushIntensity(DEFAULT_PIXELATE_INTENSITY);
     }
+  }, []);
+
+  const handleEditorToolChange = useCallback((tool: EditorToolId) => {
+    setEditorTool(tool);
+    if (tool !== "select") {
+      setCleanupTool("select");
+    }
+  }, []);
+
+  const updateDrawingSetting = useCallback(
+    <K extends keyof typeof drawingSettings>(
+      key: K,
+      value: (typeof drawingSettings)[K],
+    ) => {
+      setDrawingSettings((previous) => ({ ...previous, [key]: value }));
+    },
+    [],
+  );
+
+  const resetToSelectTool = useCallback(() => {
+    setEditorTool("select");
+    setCleanupTool("select");
   }, []);
 
   return {
@@ -189,9 +223,14 @@ export function useAdvancedEditor() {
     clearExportError,
     clearExportSuccess,
     cleanupTool,
+    editorTool,
     brushSize,
     brushIntensity,
+    drawingSettings,
     setCleanupTool: handleCleanupToolChange,
+    setEditorTool: handleEditorToolChange,
+    updateDrawingSetting,
+    resetToSelectTool,
     setBrushSize,
     setBrushIntensity,
     ...layersState,

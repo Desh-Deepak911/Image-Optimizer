@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Konva from "konva";
 import {
+  Arrow,
   Circle,
   Group,
   Image as KonvaImage,
@@ -13,6 +14,7 @@ import {
   Text,
   Transformer,
 } from "react-konva";
+import { AnnotationDrawOverlay } from "@/components/advanced/AnnotationDrawOverlay";
 import { CanvasZoomControls } from "@/components/advanced/CanvasZoomControls";
 import { CleanupBrushOverlay } from "@/components/advanced/CleanupBrushOverlay";
 import { CoverPatchOverlay } from "@/components/advanced/CoverPatchOverlay";
@@ -36,27 +38,71 @@ import {
   hasActiveGlow,
   usesImageClipMask,
 } from "@/lib/konva/imageLayerRender";
-import { getLayerBounds, type LayerBounds } from "@/lib/konva/layerBounds";
+import { type LayerBounds } from "@/lib/konva/layerBounds";
+import { getStrokeColor, EDITOR_TOOL_CURSORS, isAnnotationTool } from "@/lib/konva/annotationTools";
 import {
   snapLayerPosition,
   type SnapGuideLine,
 } from "@/lib/konva/snapGuides";
 import type {
+  CalloutEditorLayer,
+  CalloutKind,
   CleanupBrushStroke,
   CleanupToolId,
+  DrawingToolSettings,
   EditorLayer,
+  EditorToolId,
   ImageEditorLayer,
   ImageSourceCrop,
   LayerTransformUpdate,
+  ShapeEditorLayer,
   StageBackground,
 } from "@/types/konvaEditor";
-import { DEFAULT_IMAGE_LAYER_STYLE } from "@/types/konvaEditor";
+import {
+  DEFAULT_IMAGE_LAYER_STYLE,
+  DEFAULT_TEXT_FONT_FAMILY,
+  isVectorShape,
+} from "@/types/konvaEditor";
 
 type TransformableNode = Konva.Node;
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 1.2;
+
+function isPointBasedShape(shape: ShapeEditorLayer["shape"]): boolean {
+  return (
+    shape === "line" ||
+    shape === "arrow" ||
+    shape === "freehand" ||
+    shape === "highlighter"
+  );
+}
+
+function scaleLinePoints(
+  points: number[],
+  scaleX: number,
+  scaleY: number,
+): number[] {
+  return points.map((value, index) =>
+    index % 2 === 0 ? value * scaleX : value * scaleY,
+  );
+}
+
+function boundsFromPoints(points: number[]): { width: number; height: number } {
+  let maxX = 0;
+  let maxY = 0;
+
+  for (let index = 0; index < points.length; index += 2) {
+    maxX = Math.max(maxX, points[index] ?? 0);
+    maxY = Math.max(maxY, points[index + 1] ?? 0);
+  }
+
+  return {
+    width: Math.max(1, maxX),
+    height: Math.max(1, maxY),
+  };
+}
 
 function applyTransformEnd(
   node: TransformableNode,
@@ -93,20 +139,19 @@ function applyTransformEnd(
     return;
   }
 
-  if (layer.type === "shape" && layer.shape === "line") {
-    const lineNode = node as Konva.Line;
-    const points = lineNode.points();
-    const nextWidth = Math.max(4, Math.abs(points[2] - points[0]) * scaleX);
-    const nextHeight = Math.max(0, Math.abs(points[3] - points[1]) * scaleY);
-
-    lineNode.points([0, 0, nextWidth, nextHeight]);
+  if (layer.type === "shape" && isPointBasedShape(layer.shape)) {
+    const lineNode = node as Konva.Line | Konva.Arrow;
+    const scaledPoints = scaleLinePoints(lineNode.points(), scaleX, scaleY);
+    lineNode.points(scaledPoints);
+    const { width, height } = boundsFromPoints(scaledPoints);
 
     onChange({
       x: node.x(),
       y: node.y(),
-      width: nextWidth,
-      height: nextHeight,
+      width,
+      height,
       rotation: node.rotation(),
+      points: scaledPoints,
     });
     return;
   }
@@ -148,15 +193,6 @@ function getBoundsFromNode(node: Konva.Node, layer: EditorLayer): LayerBounds {
     };
   }
 
-  if (layer.type === "shape" && layer.shape === "line") {
-    return {
-      x: node.x(),
-      y: node.y(),
-      width: layer.width,
-      height: layer.height,
-    };
-  }
-
   if (layer.type === "shape" && layer.shape === "circle") {
     return {
       x: node.x() - layer.width / 2,
@@ -166,7 +202,30 @@ function getBoundsFromNode(node: Konva.Node, layer: EditorLayer): LayerBounds {
     };
   }
 
-  return getLayerBounds(layer);
+  if (layer.type === "shape" && isPointBasedShape(layer.shape)) {
+    return {
+      x: node.x(),
+      y: node.y(),
+      width: layer.width,
+      height: layer.height,
+    };
+  }
+
+  if (layer.type === "callout") {
+    return {
+      x: node.x(),
+      y: node.y(),
+      width: layer.width,
+      height: layer.height,
+    };
+  }
+
+  return {
+    x: node.x(),
+    y: node.y(),
+    width: layer.width,
+    height: layer.height,
+  };
 }
 
 function applyNodePosition(node: Konva.Node, layer: EditorLayer, bounds: LayerBounds): void {
@@ -212,6 +271,19 @@ function createDragHandlers(
   };
 }
 
+function createLayerSelectionHandlers(onSelect: () => void) {
+  return {
+    onClick: (event: Konva.KonvaEventObject<MouseEvent>) => {
+      event.cancelBubble = true;
+      onSelect();
+    },
+    onTap: (event: Konva.KonvaEventObject<Event>) => {
+      event.cancelBubble = true;
+      onSelect();
+    },
+  };
+}
+
 interface LayerNodeProps {
   layer: EditorLayer;
   onSelect: () => void;
@@ -221,6 +293,7 @@ interface LayerNodeProps {
   snapContext: SnapContext;
   cropEditingLayerId?: string | null;
   isCleanupPainting?: boolean;
+  isAnnotationDrawing?: boolean;
 }
 
 function resolveImageStyle(
@@ -287,6 +360,7 @@ function ImageLayerNode({
   snapContext,
   cropEditingLayerId,
   isCleanupPainting = false,
+  isAnnotationDrawing = false,
 }: LayerNodeProps & { layer: ImageEditorLayer }) {
   const groupRef = useRef<Konva.Group>(null);
   const imageRef = useRef<Konva.Image>(null);
@@ -303,6 +377,10 @@ function ImageLayerNode({
     () => createDragHandlers(layer, snapContext, onChange),
     [layer, onChange, snapContext],
   );
+  const selectionHandlers = useMemo(
+    () => createLayerSelectionHandlers(onSelect),
+    [onSelect],
+  );
 
   const style = resolveImageStyle(layer.style);
   const crop = getEffectiveImageCrop(
@@ -315,7 +393,8 @@ function ImageLayerNode({
   const useDropShadow = hasActiveDropShadow(style);
   const useGroupWrapper = useClip || useGlow;
   const isCropEditing = cropEditingLayerId === layer.id;
-  const isInteractionLocked = isCropEditing || isCleanupPainting;
+  const isInteractionLocked =
+    isCropEditing || isCleanupPainting || isAnnotationDrawing;
   const cornerRadius = getImageCornerRadius(style.mask, style.cornerRadius);
 
   useEffect(() => {
@@ -402,7 +481,7 @@ function ImageLayerNode({
       shadowColor={style.shadowColor}
       shadowOffsetY={style.shadowOffsetY}
       shadowOpacity={useDropShadow ? style.shadowOpacity : 0}
-      listening={!isInteractionLocked}
+      listening={useGroupWrapper ? false : !isInteractionLocked}
     />
   );
 
@@ -434,6 +513,7 @@ function ImageLayerNode({
       {renderGlowImage()}
       {useClip ? (
         <Group
+          listening={false}
           clipFunc={(context) => {
             drawImageMaskPath(
               context,
@@ -472,18 +552,23 @@ function ImageLayerNode({
           rotation={layer.rotation}
           opacity={layer.opacity}
           draggable={!layer.locked && !isInteractionLocked}
-          onClick={onSelect}
-          onTap={onSelect}
           onContextMenu={(event) => {
             event.evt.preventDefault();
             onSelect();
             onContextMenu(layer.id, event.evt.clientX, event.evt.clientY);
           }}
+          {...selectionHandlers}
           {...(isInteractionLocked ? {} : dragHandlers)}
           onTransformEnd={(event) => {
             applyTransformEnd(event.target, layer, onChange);
           }}
         >
+          <Rect
+            width={layer.width}
+            height={layer.height}
+            fill="rgba(0,0,0,0.001)"
+            listening={!isInteractionLocked}
+          />
           {groupContent}
         </Group>
       </>
@@ -506,13 +591,12 @@ function ImageLayerNode({
         shadowOffsetY={style.shadowOffsetY}
         shadowOpacity={useDropShadow ? style.shadowOpacity : 0}
         draggable={!layer.locked && !isInteractionLocked}
-        onClick={onSelect}
-        onTap={onSelect}
         onContextMenu={(event) => {
           event.evt.preventDefault();
           onSelect();
           onContextMenu(layer.id, event.evt.clientX, event.evt.clientY);
         }}
+        {...selectionHandlers}
         {...(isInteractionLocked ? {} : dragHandlers)}
       onTransformEnd={(event) => {
         applyTransformEnd(event.target, layer, onChange);
@@ -528,11 +612,16 @@ function TextLayerNode({
   registerNode,
   onContextMenu,
   snapContext,
+  isAnnotationDrawing = false,
 }: LayerNodeProps & { layer: Extract<EditorLayer, { type: "text" }> }) {
   const textRef = useRef<Konva.Text>(null);
   const dragHandlers = useMemo(
     () => createDragHandlers(layer, snapContext, onChange),
     [layer, onChange, snapContext],
+  );
+  const selectionHandlers = useMemo(
+    () => createLayerSelectionHandlers(onSelect),
+    [onSelect],
   );
 
   useEffect(() => {
@@ -540,7 +629,16 @@ function TextLayerNode({
     return () => {
       registerNode(layer.id, null);
     };
-  }, [layer.id, registerNode, layer.text, layer.fontSize]);
+  }, [
+    layer.id,
+    registerNode,
+    layer.text,
+    layer.fontSize,
+    layer.fontFamily,
+    layer.fontStyle,
+    layer.align,
+    layer.width,
+  ]);
 
   if (!layer.visible) {
     return null;
@@ -554,18 +652,21 @@ function TextLayerNode({
       y={layer.y}
       width={layer.width}
       fontSize={layer.fontSize}
+      fontFamily={layer.fontFamily ?? DEFAULT_TEXT_FONT_FAMILY}
+      fontStyle={layer.fontStyle ?? "normal"}
+      align={layer.align ?? "left"}
       fill={layer.fill}
       rotation={layer.rotation}
       opacity={layer.opacity}
-      draggable={!layer.locked}
-      onClick={onSelect}
-      onTap={onSelect}
+      wrap="word"
+      draggable={!layer.locked && !isAnnotationDrawing}
       onContextMenu={(event) => {
         event.evt.preventDefault();
         onSelect();
         onContextMenu(layer.id, event.evt.clientX, event.evt.clientY);
       }}
-      {...dragHandlers}
+      {...selectionHandlers}
+      {...(isAnnotationDrawing ? {} : dragHandlers)}
       onTransformEnd={(event) => {
         applyTransformEnd(event.target, layer, onChange);
       }}
@@ -580,11 +681,21 @@ function ShapeLayerNode({
   registerNode,
   onContextMenu,
   snapContext,
-}: LayerNodeProps & { layer: Extract<EditorLayer, { type: "shape" }> }) {
-  const shapeRef = useRef<Konva.Rect | Konva.Circle | Konva.Line>(null);
+  isAnnotationDrawing = false,
+}: LayerNodeProps & {
+  layer: Extract<EditorLayer, { type: "shape" }>;
+  isAnnotationDrawing?: boolean;
+}) {
+  const shapeRef = useRef<Konva.Rect | Konva.Circle | Konva.Line | Konva.Arrow | Konva.Group>(
+    null,
+  );
   const dragHandlers = useMemo(
     () => createDragHandlers(layer, snapContext, onChange),
     [layer, onChange, snapContext],
+  );
+  const selectionHandlers = useMemo(
+    () => createLayerSelectionHandlers(onSelect),
+    [onSelect],
   );
 
   useEffect(() => {
@@ -592,7 +703,14 @@ function ShapeLayerNode({
     return () => {
       registerNode(layer.id, null);
     };
-  }, [layer.id, registerNode, layer.shape, layer.width, layer.height]);
+  }, [
+    layer.id,
+    registerNode,
+    layer.shape,
+    layer.width,
+    layer.height,
+    layer.points,
+  ]);
 
   if (!layer.visible) {
     return null;
@@ -607,11 +725,10 @@ function ShapeLayerNode({
   const commonProps = {
     opacity: layer.opacity,
     rotation: layer.rotation,
-    draggable: !layer.locked,
-    onClick: onSelect,
-    onTap: onSelect,
+    draggable: !layer.locked && !isAnnotationDrawing,
     onContextMenu: contextMenuHandler,
-    ...dragHandlers,
+    ...selectionHandlers,
+    ...(isAnnotationDrawing ? {} : dragHandlers),
     onTransformEnd: (event: Konva.KonvaEventObject<Event>) => {
       applyTransformEnd(event.target, layer, onChange);
     },
@@ -625,6 +742,10 @@ function ShapeLayerNode({
       : {}),
   };
 
+  const strokeColor = getStrokeColor(layer);
+  const dash = layer.dashed ? [10, 6] : undefined;
+  const vectorPoints = layer.points ?? [0, 0, layer.width, layer.height];
+
   if (layer.shape === "rectangle") {
     return (
       <Rect
@@ -634,6 +755,8 @@ function ShapeLayerNode({
         width={layer.width}
         height={layer.height}
         fill={layer.fill}
+        stroke={layer.strokeColor}
+        strokeWidth={layer.strokeWidth}
         cornerRadius={layer.cornerRadius ?? 0}
         {...commonProps}
       />
@@ -650,6 +773,8 @@ function ShapeLayerNode({
         y={layer.y + layer.height / 2}
         radius={radius}
         fill={layer.fill}
+        stroke={layer.strokeColor}
+        strokeWidth={layer.strokeWidth}
         {...commonProps}
         onDragMove={commonProps.onDragMove}
         onDragEnd={commonProps.onDragEnd}
@@ -660,18 +785,202 @@ function ShapeLayerNode({
     );
   }
 
+  if (layer.shape === "arrow") {
+    return (
+      <Arrow
+        ref={shapeRef as React.RefObject<Konva.Arrow>}
+        x={layer.x}
+        y={layer.y}
+        points={vectorPoints}
+        stroke={strokeColor}
+        fill={strokeColor}
+        strokeWidth={layer.strokeWidth}
+        pointerLength={layer.arrowHeadSize ?? 14}
+        pointerWidth={layer.arrowHeadSize ?? 14}
+        dash={dash}
+        lineCap="round"
+        hitStrokeWidth={20}
+        {...commonProps}
+      />
+    );
+  }
+
+  if (layer.shape === "freehand" || layer.shape === "highlighter") {
+    return (
+      <Line
+        ref={shapeRef as React.RefObject<Konva.Line>}
+        x={layer.x}
+        y={layer.y}
+        points={vectorPoints}
+        stroke={layer.shape === "highlighter" ? layer.fill : strokeColor}
+        strokeWidth={layer.strokeWidth}
+        tension={layer.tension ?? 0.45}
+        lineCap="round"
+        lineJoin="round"
+        globalCompositeOperation={
+          layer.blendMode === "multiply" ? "multiply" : undefined
+        }
+        hitStrokeWidth={Math.max(layer.strokeWidth, 16)}
+        {...commonProps}
+      />
+    );
+  }
+
   return (
     <Line
       ref={shapeRef as React.RefObject<Konva.Line>}
       x={layer.x}
       y={layer.y}
-      points={[0, 0, layer.width, layer.height]}
-      stroke={layer.fill}
+      points={vectorPoints}
+      stroke={strokeColor}
       strokeWidth={layer.strokeWidth}
+      dash={dash}
       lineCap="round"
       hitStrokeWidth={20}
       {...commonProps}
     />
+  );
+}
+
+function CalloutLayerNode({
+  layer,
+  onSelect,
+  onChange,
+  registerNode,
+  onContextMenu,
+  snapContext,
+  isAnnotationDrawing = false,
+}: LayerNodeProps & {
+  layer: CalloutEditorLayer;
+  isAnnotationDrawing?: boolean;
+}) {
+  const groupRef = useRef<Konva.Group>(null);
+  const dragHandlers = useMemo(
+    () => createDragHandlers(layer, snapContext, onChange),
+    [layer, onChange, snapContext],
+  );
+  const selectionHandlers = useMemo(
+    () => createLayerSelectionHandlers(onSelect),
+    [onSelect],
+  );
+
+  useEffect(() => {
+    registerNode(layer.id, groupRef.current);
+    return () => {
+      registerNode(layer.id, null);
+    };
+  }, [
+    layer.id,
+    registerNode,
+    layer.width,
+    layer.height,
+    layer.text,
+    layer.calloutType,
+  ]);
+
+  if (!layer.visible) {
+    return null;
+  }
+
+  const contextMenuHandler = (event: Konva.KonvaEventObject<PointerEvent>) => {
+    event.evt.preventDefault();
+    onSelect();
+    onContextMenu(layer.id, event.evt.clientX, event.evt.clientY);
+  };
+
+  const commonGroupProps = {
+    x: layer.x,
+    y: layer.y,
+    rotation: layer.rotation,
+    opacity: layer.opacity,
+    draggable: !layer.locked && !isAnnotationDrawing,
+    onContextMenu: contextMenuHandler,
+    ...selectionHandlers,
+    ...(isAnnotationDrawing ? {} : dragHandlers),
+    onTransformEnd: (event: Konva.KonvaEventObject<Event>) => {
+      applyTransformEnd(event.target, layer, onChange);
+    },
+  };
+
+  if (layer.calloutType === "numbered-marker") {
+    const radius = Math.min(layer.width, layer.height) / 2;
+
+    return (
+      <Group ref={groupRef} {...commonGroupProps}>
+        <Circle
+          x={layer.width / 2}
+          y={layer.height / 2}
+          radius={radius}
+          fill={layer.fill}
+          stroke="#1d1d1f"
+          strokeWidth={2}
+          listening={false}
+        />
+        <Text
+          x={0}
+          y={layer.height / 2 - layer.fontSize / 2}
+          width={layer.width}
+          text={layer.text}
+          fontSize={layer.fontSize}
+          fontStyle="bold"
+          align="center"
+          fill={layer.textColor}
+          listening={false}
+        />
+      </Group>
+    );
+  }
+
+  const cornerRadius =
+    layer.cornerRadius ?? (layer.calloutType === "label" ? 999 : 12);
+
+  return (
+    <Group ref={groupRef} {...commonGroupProps}>
+      <Rect
+        x={0}
+        y={0}
+        width={layer.width}
+        height={layer.height - (layer.calloutType === "speech-bubble" ? 12 : 0)}
+        fill={layer.fill}
+        stroke="#1d1d1f"
+        strokeWidth={1.5}
+        cornerRadius={cornerRadius}
+        shadowBlur={8}
+        shadowColor="#000000"
+        shadowOffsetY={2}
+        shadowOpacity={0.12}
+        listening={false}
+      />
+      {layer.calloutType === "speech-bubble" ? (
+        <Line
+          points={[
+            layer.width * 0.25,
+            layer.height - 12,
+            layer.width * 0.15,
+            layer.height,
+            layer.width * 0.35,
+            layer.height - 12,
+          ]}
+          fill={layer.fill}
+          closed
+          stroke="#1d1d1f"
+          strokeWidth={1.5}
+          listening={false}
+        />
+      ) : null}
+      <Text
+        x={12}
+        y={12}
+        width={layer.width - 24}
+        height={layer.height - 24}
+        text={layer.text}
+        fontSize={layer.fontSize}
+        fill={layer.textColor}
+        align="center"
+        verticalAlign="middle"
+        listening={false}
+      />
+    </Group>
   );
 }
 
@@ -685,6 +994,8 @@ function EditorLayerNode(props: LayerNodeProps) {
       return <TextLayerNode {...props} layer={layer} />;
     case "shape":
       return <ShapeLayerNode {...props} layer={layer} />;
+    case "callout":
+      return <CalloutLayerNode {...props} layer={layer} />;
   }
 }
 
@@ -714,6 +1025,31 @@ interface KonvaEditorStageProps {
     width: number;
     height: number;
   }) => void;
+  editorTool?: EditorToolId;
+  drawingSettings?: DrawingToolSettings;
+  onLineComplete?: (geometry: {
+    shape: "line" | "arrow";
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    points: number[];
+  }) => void;
+  onFreehandComplete?: (geometry: {
+    shape: "freehand" | "highlighter";
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    points: number[];
+  }) => void;
+  onCalloutComplete?: (geometry: {
+    calloutType: CalloutKind;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }) => void;
 }
 
 export function KonvaEditorStage({
@@ -734,6 +1070,11 @@ export function KonvaEditorStage({
   onCleanupStrokeStart,
   onCleanupStrokePreview,
   onCoverPatchComplete,
+  editorTool = "select",
+  drawingSettings,
+  onLineComplete,
+  onFreehandComplete,
+  onCalloutComplete,
 }: KonvaEditorStageProps) {
   const transformerRef = useRef<Konva.Transformer>(null);
   const nodeMapRef = useRef<Map<string, TransformableNode>>(new Map());
@@ -747,6 +1088,7 @@ export function KonvaEditorStage({
     x: number;
     y: number;
   } | null>(null);
+  const [nodeRegistryVersion, setNodeRegistryVersion] = useState(0);
 
   const effectiveScale = fitScale * zoomMultiplier;
   const stagePixelWidth = stageWidth * effectiveScale;
@@ -759,6 +1101,8 @@ export function KonvaEditorStage({
       } else {
         nodeMapRef.current.delete(layerId);
       }
+
+      setNodeRegistryVersion((version) => version + 1);
     },
     [],
   );
@@ -807,11 +1151,13 @@ export function KonvaEditorStage({
       cleanupTool === "blur-brush" ||
       cleanupTool === "pixelate-brush" ||
       cleanupTool === "cover-patch";
+    const isAnnotationToolActive = isAnnotationTool(editorTool);
     const node =
       selectedLayer &&
       !selectedLayer.locked &&
       !cropEditingLayerId &&
-      !isCleanupToolActive
+      !isCleanupToolActive &&
+      !isAnnotationToolActive
         ? nodeMapRef.current.get(selectedLayerId ?? "")
         : null;
 
@@ -822,7 +1168,14 @@ export function KonvaEditorStage({
     }
 
     transformer.getLayer()?.batchDraw();
-  }, [cleanupTool, cropEditingLayerId, layers, selectedLayerId]);
+  }, [
+    cleanupTool,
+    cropEditingLayerId,
+    editorTool,
+    layers,
+    nodeRegistryVersion,
+    selectedLayerId,
+  ]);
 
   const selectedLayer = layers.find((layer) => layer.id === selectedLayerId);
   const selectedImageLayer =
@@ -831,10 +1184,12 @@ export function KonvaEditorStage({
   const isPixelateBrushActive = cleanupTool === "pixelate-brush";
   const isCoverPatchActive = cleanupTool === "cover-patch";
   const isBrushToolActive = isBlurBrushActive || isPixelateBrushActive;
+  const isAnnotationToolActive = isAnnotationTool(editorTool);
   const canPaintSelectedImage =
     selectedImageLayer !== null &&
     !selectedImageLayer.locked &&
-    isBrushToolActive;
+    isBrushToolActive &&
+    editorTool === "select";
 
   const snapContext = useMemo<SnapContext>(
     () => ({
@@ -873,7 +1228,10 @@ export function KonvaEditorStage({
       className={`relative w-full overflow-auto rounded-lg ${
         background.transparent ? "checkerboard" : ""
       }`}
-      style={{ maxHeight: "min(70vh, 720px)" }}
+      style={{
+        maxHeight: "min(70vh, 720px)",
+        cursor: EDITOR_TOOL_CURSORS[editorTool],
+      }}
     >
       <CanvasZoomControls
         zoomPercent={Math.round(zoomMultiplier * 100)}
@@ -910,13 +1268,23 @@ export function KonvaEditorStage({
           scaleX={effectiveScale}
           scaleY={effectiveScale}
           onMouseDown={(event) => {
-            if (event.target === event.target.getStage()) {
+            const target = event.target;
+            const clickedEmpty =
+              target === target.getStage() ||
+              target.name() === "stage-background";
+
+            if (clickedEmpty) {
               onSelectLayer(null);
               setContextMenu(null);
             }
           }}
           onTouchStart={(event) => {
-            if (event.target === event.target.getStage()) {
+            const target = event.target;
+            const clickedEmpty =
+              target === target.getStage() ||
+              target.name() === "stage-background";
+
+            if (clickedEmpty) {
               onSelectLayer(null);
               setContextMenu(null);
             }
@@ -930,7 +1298,7 @@ export function KonvaEditorStage({
                 y={0}
                 width={stageWidth}
                 height={stageHeight}
-                listening={false}
+                listening={true}
                 {...backgroundFillProps}
               />
             ) : null}
@@ -972,6 +1340,7 @@ export function KonvaEditorStage({
                 isCleanupPainting={
                   canPaintSelectedImage && layer.id === selectedImageLayer?.id
                 }
+                isAnnotationDrawing={isAnnotationToolActive}
               />
             ))}
 
@@ -1014,11 +1383,27 @@ export function KonvaEditorStage({
               />
             ) : null}
 
-            {isCoverPatchActive && onCoverPatchComplete ? (
+            {isCoverPatchActive && onCoverPatchComplete && editorTool === "select" ? (
               <CoverPatchOverlay
                 stageWidth={stageWidth}
                 stageHeight={stageHeight}
                 onCoverPatchComplete={onCoverPatchComplete}
+              />
+            ) : null}
+
+            {isAnnotationToolActive &&
+            drawingSettings &&
+            onLineComplete &&
+            onFreehandComplete &&
+            onCalloutComplete ? (
+              <AnnotationDrawOverlay
+                editorTool={editorTool}
+                drawingSettings={drawingSettings}
+                stageWidth={stageWidth}
+                stageHeight={stageHeight}
+                onLineComplete={onLineComplete}
+                onFreehandComplete={onFreehandComplete}
+                onCalloutComplete={onCalloutComplete}
               />
             ) : null}
 
@@ -1028,17 +1413,28 @@ export function KonvaEditorStage({
                 !selectedLayer?.locked &&
                 !cropEditingLayerId &&
                 !isBrushToolActive &&
-                !isCoverPatchActive
+                !isCoverPatchActive &&
+                !isAnnotationToolActive
               }
               enabledAnchors={
                 selectedLayer?.locked ||
                 cropEditingLayerId ||
                 isBrushToolActive ||
-                isCoverPatchActive
+                isCoverPatchActive ||
+                isAnnotationToolActive
                   ? []
                   : selectedLayer?.type === "shape" &&
-                      selectedLayer.shape === "line"
-                    ? ["middle-left", "middle-right"]
+                      isVectorShape(selectedLayer)
+                    ? [
+                        "top-left",
+                        "top-right",
+                        "bottom-left",
+                        "bottom-right",
+                        "middle-left",
+                        "middle-right",
+                        "top-center",
+                        "bottom-center",
+                      ]
                     : [
                         "top-left",
                         "top-right",

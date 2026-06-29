@@ -97,6 +97,10 @@ export function exportKonvaStageToBlob(
       transformerVisibility.push({ node, visible: node.visible() });
       node.visible(false);
     });
+    stage.find(".drawing-guide").forEach((node) => {
+      transformerVisibility.push({ node, visible: node.visible() });
+      node.visible(false);
+    });
     contentLayer?.batchDraw();
 
     if (contentLayer) {

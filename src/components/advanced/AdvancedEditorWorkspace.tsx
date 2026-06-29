@@ -8,6 +8,7 @@ import {
 } from "@/components/advanced/AddLayerUpload";
 import { AdvancedExportPanel } from "@/components/advanced/AdvancedExportPanel";
 import { CleanupToolsPanel } from "@/components/advanced/CleanupToolsPanel";
+import { DrawingToolsPanel } from "@/components/advanced/DrawingToolsPanel";
 import { EditorControlsPanel } from "@/components/advanced/EditorControlsPanel";
 import { EditorEmptyState } from "@/components/advanced/EditorEmptyState";
 import { EditorToolbar } from "@/components/advanced/EditorToolbar";
@@ -28,7 +29,7 @@ import { useEditorKeyboardShortcuts } from "@/hooks/useEditorKeyboardShortcuts";
 import type { LayerAlignment } from "@/lib/konva/layerBounds";
 import type { QuickLayoutId } from "@/lib/konva/quickLayouts";
 import type { ScreenshotMockupId } from "@/lib/konva/screenshotMockups";
-import type { CleanupToolId, ImageSourceCrop } from "@/types/konvaEditor";
+import type { CleanupToolId, EditorToolId, ImageSourceCrop } from "@/types/konvaEditor";
 
 const KonvaEditorStage = dynamic(
   () =>
@@ -59,6 +60,7 @@ export function AdvancedEditorWorkspace() {
     onDeleteSelected: editor.deleteSelectedLayer,
     onUndo: editor.undo,
     onRedo: editor.redo,
+    onEscape: editor.resetToSelectTool,
   });
 
   const handleSelectedLayerAction = (
@@ -139,6 +141,18 @@ export function AdvancedEditorWorkspace() {
     [cropEditingLayerId, editor],
   );
 
+  const handleEditorToolChange = useCallback(
+    (tool: EditorToolId) => {
+      if (tool !== "select" && cropEditingLayerId) {
+        editor.checkpointHistory();
+        setCropEditingLayerId(null);
+      }
+
+      editor.setEditorTool(tool);
+    },
+    [cropEditingLayerId, editor],
+  );
+
   return (
     <>
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] lg:gap-8">
@@ -214,6 +228,33 @@ export function AdvancedEditorWorkspace() {
                     editor.addCoverPatchLayer(rect);
                     editor.setCleanupTool("select");
                   }}
+                  editorTool={editor.editorTool}
+                  drawingSettings={editor.drawingSettings}
+                  onLineComplete={(geometry) => {
+                    editor.addVectorShapeLayer({
+                      ...geometry,
+                      settings: editor.drawingSettings,
+                    });
+                    editor.setEditorTool("select");
+                  }}
+                  onFreehandComplete={(geometry) => {
+                    editor.addVectorShapeLayer({
+                      ...geometry,
+                      settings: editor.drawingSettings,
+                    });
+                    editor.setEditorTool("select");
+                  }}
+                  onCalloutComplete={(geometry) => {
+                    editor.addCalloutLayer({
+                      ...geometry,
+                      settings: editor.drawingSettings,
+                      markerNumber:
+                        geometry.calloutType === "numbered-marker"
+                          ? editor.getNextMarkerNumber()
+                          : undefined,
+                    });
+                    editor.setEditorTool("select");
+                  }}
                 />
 
                 {editor.isExporting ? (
@@ -255,6 +296,12 @@ export function AdvancedEditorWorkspace() {
 
           {editor.showCanvas ? (
             <div className="order-3 lg:hidden space-y-4">
+              <DrawingToolsPanel
+                editorTool={editor.editorTool}
+                drawingSettings={editor.drawingSettings}
+                onEditorToolChange={handleEditorToolChange}
+                onDrawingSettingChange={editor.updateDrawingSetting}
+              />
               <CleanupToolsPanel
                 cleanupTool={editor.cleanupTool}
                 brushSize={editor.brushSize}
@@ -391,6 +438,12 @@ export function AdvancedEditorWorkspace() {
 
           {editor.showCanvas ? (
             <div className="hidden lg:block space-y-4">
+              <DrawingToolsPanel
+                editorTool={editor.editorTool}
+                drawingSettings={editor.drawingSettings}
+                onEditorToolChange={handleEditorToolChange}
+                onDrawingSettingChange={editor.updateDrawingSetting}
+              />
               <CleanupToolsPanel
                 cleanupTool={editor.cleanupTool}
                 brushSize={editor.brushSize}

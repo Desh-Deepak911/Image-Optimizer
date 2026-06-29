@@ -60,11 +60,10 @@ export function EditorToolbar({
         <ToolButton label="Text" onClick={onAddText} />
         <ToolButton label="Rectangle" onClick={() => onAddShape("rectangle")} />
         <ToolButton label="Circle" onClick={() => onAddShape("circle")} />
-        <ToolButton label="Line" onClick={() => onAddShape("line")} />
       </div>
 
       <p className="mt-3 text-[11px] leading-relaxed text-[#86868b]">
-        Shortcuts: Delete to remove layer · ⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z redo
+        Shortcuts: Delete to remove layer · ⌘/Ctrl+Z undo · ⌘/Ctrl+Shift+Z redo · Esc to Select
       </p>
     </div>
   );

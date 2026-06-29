@@ -30,12 +30,16 @@ import {
   createImageLayer,
   createLayerId,
   createCoverPatchLayer,
+  createCalloutLayer,
   createShapeLayer,
   createTextLayer,
+  createVectorShapeLayer,
   DEFAULT_IMAGE_FILTERS,
   DEFAULT_IMAGE_LAYER_STYLE,
   DEFAULT_STAGE_BACKGROUND,
   type CleanupBrushStroke,
+  type CalloutKind,
+  type DrawingToolSettings,
   type EditorLayer,
   type EditorLayerUpdate,
   type ImageEditorLayer,
@@ -221,6 +225,95 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
     },
     [mutateDocument, stageHeight, stageWidth],
   );
+
+  const addVectorShapeLayer = useCallback(
+    ({
+      shape,
+      x,
+      y,
+      width,
+      height,
+      points,
+      settings,
+    }: {
+      shape: Extract<ShapeKind, "line" | "arrow" | "freehand" | "highlighter">;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      points: number[];
+      settings: DrawingToolSettings;
+    }) => {
+      mutateDocument((previous) => {
+        const nextLayer = createVectorShapeLayer({
+          shape,
+          x,
+          y,
+          width,
+          height,
+          points,
+          settings,
+          layerIndex: previous.layers.length,
+        });
+
+        return {
+          ...previous,
+          layers: [...previous.layers, nextLayer],
+          selectedLayerId: nextLayer.id,
+        };
+      });
+    },
+    [mutateDocument],
+  );
+
+  const addCalloutLayer = useCallback(
+    ({
+      calloutType,
+      x,
+      y,
+      width,
+      height,
+      settings,
+      markerNumber,
+    }: {
+      calloutType: CalloutKind;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      settings: DrawingToolSettings;
+      markerNumber?: number;
+    }) => {
+      mutateDocument((previous) => {
+        const nextLayer = createCalloutLayer({
+          calloutType,
+          x,
+          y,
+          width,
+          height,
+          settings,
+          layerIndex: previous.layers.length,
+          markerNumber,
+        });
+
+        return {
+          ...previous,
+          layers: [...previous.layers, nextLayer],
+          selectedLayerId: nextLayer.id,
+        };
+      });
+    },
+    [mutateDocument],
+  );
+
+  const getNextMarkerNumber = useCallback(() => {
+    return (
+      layers.filter(
+        (layer) =>
+          layer.type === "callout" && layer.calloutType === "numbered-marker",
+      ).length + 1
+    );
+  }, [layers]);
 
   const selectLayer = useCallback(
     (layerId: string | null) => {
@@ -1015,6 +1108,9 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
     addLayerFromFile,
     addTextLayer,
     addShapeLayer,
+    addVectorShapeLayer,
+    addCalloutLayer,
+    getNextMarkerNumber,
     applyQuickLayout,
     applyScreenshotMockup,
     applyScreenshotBackground,

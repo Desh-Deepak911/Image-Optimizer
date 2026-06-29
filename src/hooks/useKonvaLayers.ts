@@ -39,7 +39,6 @@ import {
   DEFAULT_STAGE_BACKGROUND,
   type CleanupBrushStroke,
   type CalloutKind,
-  type DrawingToolSettings,
   type EditorLayer,
   type EditorLayerUpdate,
   type ImageEditorLayer,
@@ -47,6 +46,11 @@ import {
   type ShapeKind,
   type StageBackground,
 } from "@/types/konvaEditor";
+import {
+  applyAnnotationStyleToShapeLayer,
+  styleForShapeKind,
+} from "@/lib/konva/annotationStyle";
+import type { AnnotationStyle } from "@/types/annotationStyle";
 import { createFullImageCrop } from "@/lib/konva/imageCrop";
 import { createCleanupStrokeId } from "@/lib/konva/cleanupEffects";
 import type { UploadedImage } from "@/types/optimizer";
@@ -207,7 +211,7 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
   }, [mutateDocument, stageHeight, stageWidth]);
 
   const addShapeLayer = useCallback(
-    (shape: ShapeKind) => {
+    (shape: ShapeKind, style?: AnnotationStyle) => {
       mutateDocument((previous) => {
         const nextLayer = createShapeLayer(
           shape,
@@ -215,11 +219,20 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
           stageHeight,
           previous.layers.length,
         );
+        const styledLayer = style
+          ? {
+              ...nextLayer,
+              ...applyAnnotationStyleToShapeLayer(
+                styleForShapeKind(style, shape),
+                shape,
+              ),
+            }
+          : nextLayer;
 
         return {
           ...previous,
-          layers: [...previous.layers, nextLayer],
-          selectedLayerId: nextLayer.id,
+          layers: [...previous.layers, styledLayer],
+          selectedLayerId: styledLayer.id,
         };
       });
     },
@@ -242,7 +255,7 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
       width: number;
       height: number;
       points: number[];
-      settings: DrawingToolSettings;
+      settings: AnnotationStyle;
     }) => {
       mutateDocument((previous) => {
         const nextLayer = createVectorShapeLayer({
@@ -281,7 +294,7 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
       y: number;
       width: number;
       height: number;
-      settings: DrawingToolSettings;
+      settings: AnnotationStyle;
       markerNumber?: number;
     }) => {
       mutateDocument((previous) => {

@@ -1,10 +1,14 @@
+import type { AnnotationStyle } from "@/types/annotationStyle";
+import {
+  getEffectiveStrokeColor,
+  resolveShapeAnnotationStyle,
+} from "@/lib/konva/annotationStyle";
 import type {
   CalloutKind,
-  DrawingToolSettings,
   EditorToolId,
   ShapeEditorLayer,
 } from "@/types/konvaEditor";
-import { DEFAULT_DRAWING_TOOL_SETTINGS } from "@/types/konvaEditor";
+import { DEFAULT_ANNOTATION_STYLE } from "@/types/annotationStyle";
 
 export const EDITOR_TOOL_OPTIONS: {
   id: EditorToolId;
@@ -66,9 +70,9 @@ export function isAnnotationTool(tool: EditorToolId): boolean {
 
 export function getStrokeColor(
   layer: ShapeEditorLayer,
-  settings: DrawingToolSettings = DEFAULT_DRAWING_TOOL_SETTINGS,
+  settings: AnnotationStyle = DEFAULT_ANNOTATION_STYLE,
 ): string {
-  return layer.strokeColor ?? layer.fill ?? settings.strokeColor;
+  return getEffectiveStrokeColor(resolveShapeAnnotationStyle(layer)) || settings.strokeColor;
 }
 
 export interface LineGeometry {

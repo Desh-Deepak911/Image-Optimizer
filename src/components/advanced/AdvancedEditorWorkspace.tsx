@@ -8,10 +8,10 @@ import {
 } from "@/components/advanced/AddLayerUpload";
 import { AdvancedExportPanel } from "@/components/advanced/AdvancedExportPanel";
 import { CleanupToolsPanel } from "@/components/advanced/CleanupToolsPanel";
-import { DrawingToolsPanel } from "@/components/advanced/DrawingToolsPanel";
 import { EditorControlsPanel } from "@/components/advanced/EditorControlsPanel";
 import { EditorEmptyState } from "@/components/advanced/EditorEmptyState";
 import { EditorToolbar } from "@/components/advanced/EditorToolbar";
+import { TextSettingsPanel } from "@/components/advanced/TextSettingsPanel";
 import { LayerAlignmentControls } from "@/components/advanced/LayerAlignmentControls";
 import { LayerPanel } from "@/components/advanced/LayerPanel";
 import { LayerQuickActions } from "@/components/advanced/LayerQuickActions";
@@ -229,25 +229,25 @@ export function AdvancedEditorWorkspace() {
                     editor.setCleanupTool("select");
                   }}
                   editorTool={editor.editorTool}
-                  drawingSettings={editor.drawingSettings}
+                  annotationStyle={editor.annotationStyle}
                   onLineComplete={(geometry) => {
                     editor.addVectorShapeLayer({
                       ...geometry,
-                      settings: editor.drawingSettings,
+                      settings: editor.annotationStyle,
                     });
                     editor.setEditorTool("select");
                   }}
                   onFreehandComplete={(geometry) => {
                     editor.addVectorShapeLayer({
                       ...geometry,
-                      settings: editor.drawingSettings,
+                      settings: editor.annotationStyle,
                     });
                     editor.setEditorTool("select");
                   }}
                   onCalloutComplete={(geometry) => {
                     editor.addCalloutLayer({
                       ...geometry,
-                      settings: editor.drawingSettings,
+                      settings: editor.annotationStyle,
                       markerNumber:
                         geometry.calloutType === "numbered-marker"
                           ? editor.getNextMarkerNumber()
@@ -275,7 +275,7 @@ export function AdvancedEditorWorkspace() {
             </div>
           )}
 
-          <div className="order-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+          <div className="order-2 flex flex-col gap-4">
             <AddLayerUpload
               ref={uploadRef}
               onFileSelect={(file) => {
@@ -285,23 +285,34 @@ export function AdvancedEditorWorkspace() {
             />
 
             <EditorToolbar
-              onAddText={editor.addTextLayer}
-              onAddShape={editor.addShapeLayer}
+              editorTool={editor.editorTool}
+              annotationStyle={editor.annotationStyle}
+              onEditorToolChange={handleEditorToolChange}
+              onAnnotationStyleChange={editor.updateAnnotationStyle}
+              onAddText={() => {
+                editor.addTextLayer();
+                editor.setEditorTool("select");
+              }}
+              onAddShape={(shape) => {
+                editor.addShapeLayer(shape, editor.annotationStyle);
+              }}
               onUndo={editor.undo}
               onRedo={editor.redo}
               canUndo={editor.canUndo}
               canRedo={editor.canRedo}
             />
+
+            {editor.selectedLayer?.type === "text" ? (
+              <TextSettingsPanel
+                layer={editor.selectedLayer}
+                onUpdateLayer={editor.updateLayerProperties}
+                onHistoryCheckpoint={editor.checkpointHistory}
+              />
+            ) : null}
           </div>
 
           {editor.showCanvas ? (
             <div className="order-3 lg:hidden space-y-4">
-              <DrawingToolsPanel
-                editorTool={editor.editorTool}
-                drawingSettings={editor.drawingSettings}
-                onEditorToolChange={handleEditorToolChange}
-                onDrawingSettingChange={editor.updateDrawingSetting}
-              />
               <CleanupToolsPanel
                 cleanupTool={editor.cleanupTool}
                 brushSize={editor.brushSize}
@@ -438,12 +449,6 @@ export function AdvancedEditorWorkspace() {
 
           {editor.showCanvas ? (
             <div className="hidden lg:block space-y-4">
-              <DrawingToolsPanel
-                editorTool={editor.editorTool}
-                drawingSettings={editor.drawingSettings}
-                onEditorToolChange={handleEditorToolChange}
-                onDrawingSettingChange={editor.updateDrawingSetting}
-              />
               <CleanupToolsPanel
                 cleanupTool={editor.cleanupTool}
                 brushSize={editor.brushSize}

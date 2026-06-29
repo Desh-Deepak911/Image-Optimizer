@@ -24,6 +24,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
+function isTextInputFocused(): boolean {
+  return isEditableTarget(document.activeElement);
+}
+
 export function useEditorKeyboardShortcuts({
   enabled = true,
   onDeleteSelected,
@@ -37,7 +41,7 @@ export function useEditorKeyboardShortcuts({
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) {
+      if (isEditableTarget(event.target) || isTextInputFocused()) {
         return;
       }
 

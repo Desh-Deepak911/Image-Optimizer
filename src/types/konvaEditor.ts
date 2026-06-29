@@ -4,6 +4,15 @@ import type {
   UploadedImage,
 } from "@/types/optimizer";
 import { createFullImageCrop } from "@/lib/konva/imageCrop";
+import type {
+  AnnotationStyle,
+} from "@/types/annotationStyle";
+import { DEFAULT_ANNOTATION_STYLE } from "@/types/annotationStyle";
+import {
+  applyAnnotationStyleToCalloutLayer,
+  applyAnnotationStyleToShapeLayer,
+  styleForShapeKind,
+} from "@/lib/konva/annotationStyle";
 
 export type AppMode = "optimizer" | "advanced" | "batch";
 
@@ -60,29 +69,14 @@ export type EditorToolId =
 
 export type CalloutKind = "label" | "speech-bubble" | "numbered-marker";
 
-export interface DrawingToolSettings {
-  strokeColor: string;
-  strokeWidth: number;
-  opacity: number;
-  dashed: boolean;
-  arrowHeadSize: number;
-  highlighterOpacity: number;
-  freehandTension: number;
-  calloutFill: string;
-  calloutTextColor: string;
-}
+export type { AnnotationStyle } from "@/types/annotationStyle";
+export { DEFAULT_ANNOTATION_STYLE } from "@/types/annotationStyle";
 
-export const DEFAULT_DRAWING_TOOL_SETTINGS: DrawingToolSettings = {
-  strokeColor: "#1d1d1f",
-  strokeWidth: 4,
-  opacity: 1,
-  dashed: false,
-  arrowHeadSize: 14,
-  highlighterOpacity: 0.4,
-  freehandTension: 0.45,
-  calloutFill: "#ffffff",
-  calloutTextColor: "#1d1d1f",
-};
+/** Active tool style defaults for the next annotation. */
+export type DrawingToolSettings = AnnotationStyle;
+
+export const DEFAULT_DRAWING_TOOL_SETTINGS: DrawingToolSettings =
+  DEFAULT_ANNOTATION_STYLE;
 
 export interface ImageFilters {
   brightness: number;
@@ -217,13 +211,22 @@ export interface ShapeEditorLayer extends BaseEditorLayer {
   points?: number[];
   dashed?: boolean;
   arrowHeadSize?: number;
+  arrowHeadStyle?: import("@/types/annotationStyle").ArrowHeadStyle;
+  doubleHeaded?: boolean;
+  lineCap?: import("@/types/annotationStyle").LineCapStyle;
+  lineJoin?: import("@/types/annotationStyle").LineJoinStyle;
   tension?: number;
   blendMode?: "normal" | "multiply";
   cornerRadius?: number;
   shadowBlur?: number;
   shadowColor?: string;
+  shadowOffsetX?: number;
   shadowOffsetY?: number;
   shadowOpacity?: number;
+  glowBlur?: number;
+  glowColor?: string;
+  glowOpacity?: number;
+  annotationStyle?: AnnotationStyle;
 }
 
 export interface CalloutEditorLayer extends BaseEditorLayer {
@@ -237,6 +240,13 @@ export interface CalloutEditorLayer extends BaseEditorLayer {
   fontSize: number;
   markerNumber?: number;
   cornerRadius?: number;
+  borderColor?: string;
+  borderWidth?: number;
+  shadowBlur?: number;
+  shadowColor?: string;
+  shadowOffsetY?: number;
+  shadowOpacity?: number;
+  annotationStyle?: AnnotationStyle;
 }
 
 export type EditorLayer =
@@ -381,7 +391,7 @@ export function createTextLayer(
   const fontSize = 48;
 
   return createTextLayerAt({
-    text: "Edit me",
+    text: "Edit text",
     x: (stageWidth - width) / 2,
     y: stageHeight / 2 - fontSize / 2,
     width,
@@ -499,21 +509,13 @@ export function createVectorShapeLayer({
     highlighter: "Highlight",
   };
 
-  const fill =
-    shape === "highlighter" ? "#ffd60a" : settings.strokeColor;
+  const shapedStyle = styleForShapeKind(settings, shape);
 
   return {
     id: createLayerId(),
     type: "shape",
     shape,
     name: `${names[shape]} ${layerIndex + 1}`,
-    fill,
-    strokeColor: settings.strokeColor,
-    strokeWidth:
-      shape === "highlighter"
-        ? Math.max(settings.strokeWidth * 3, 12)
-        : settings.strokeWidth,
-    dashed: settings.dashed,
     points,
     width,
     height,
@@ -522,12 +524,7 @@ export function createVectorShapeLayer({
     rotation: 0,
     visible: true,
     locked: false,
-    opacity: shape === "highlighter" ? settings.highlighterOpacity : settings.opacity,
-    ...(shape === "arrow" ? { arrowHeadSize: settings.arrowHeadSize } : {}),
-    ...(shape === "freehand" || shape === "highlighter"
-      ? { tension: settings.freehandTension }
-      : {}),
-    ...(shape === "highlighter" ? { blendMode: "multiply" as const } : {}),
+    ...applyAnnotationStyleToShapeLayer(shapedStyle, shape),
   };
 }
 
@@ -574,18 +571,14 @@ export function createCalloutLayer({
     calloutType,
     name: `${labels[calloutType]} ${layerIndex + 1}`,
     text: defaultText,
-    fill: settings.calloutFill,
-    textColor: settings.calloutTextColor,
-    fontSize: calloutType === "numbered-marker" ? 18 : 16,
     markerNumber,
-    cornerRadius: calloutType === "label" ? 999 : 12,
     visible: true,
     locked: false,
-    opacity: 1,
     x,
     y,
     rotation: 0,
     ...size,
+    ...applyAnnotationStyleToCalloutLayer(settings, calloutType),
   };
 }
 

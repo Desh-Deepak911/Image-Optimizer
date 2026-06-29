@@ -6,6 +6,15 @@ import {
   getEffectiveImageCrop,
   isFullImageCrop,
 } from "@/lib/konva/imageCrop";
+import { AnnotationStylePanel } from "@/components/advanced/AnnotationStylePanel";
+import type { AnnotationStylePanelContext } from "@/components/advanced/AnnotationStylePanel";
+import {
+  applyAnnotationStyleToCalloutLayer,
+  applyAnnotationStyleToShapeLayer,
+  normalizeAnnotationStyle,
+  resolveCalloutAnnotationStyle,
+  resolveShapeAnnotationStyle,
+} from "@/lib/konva/annotationStyle";
 import type {
   BackgroundFillType,
   CalloutEditorLayer,
@@ -16,19 +25,13 @@ import type {
   ImageMaskType,
   ShapeEditorLayer,
   StageBackground,
-  TextAlign,
-  TextEditorLayer,
-  TextFontStyle,
 } from "@/types/konvaEditor";
 import {
   DEFAULT_IMAGE_FILTERS,
   DEFAULT_IMAGE_LAYER_STYLE,
-  DEFAULT_TEXT_FONT_FAMILY,
   isCoverPatchLayer,
   isVectorShape,
-  TEXT_FONT_FAMILY_OPTIONS,
 } from "@/types/konvaEditor";
-import { getStrokeColor } from "@/lib/konva/annotationTools";
 
 interface EditorControlsPanelProps {
   selectedLayer: EditorLayer | null;
@@ -296,6 +299,25 @@ function ImageMaskControls({
   );
 }
 
+function shapeToStyleContext(
+  shape: ShapeEditorLayer["shape"],
+): AnnotationStylePanelContext {
+  switch (shape) {
+    case "arrow":
+      return "arrow";
+    case "line":
+      return "line";
+    case "freehand":
+      return "freehand";
+    case "highlighter":
+      return "highlighter";
+    case "circle":
+      return "circle";
+    default:
+      return "rectangle";
+  }
+}
+
 function VectorShapeControls({
   layer,
   onUpdateLayer,
@@ -305,87 +327,34 @@ function VectorShapeControls({
   onUpdateLayer: EditorControlsPanelProps["onUpdateLayer"];
   onHistoryCheckpoint: () => void;
 }) {
-  const strokeColor = getStrokeColor(layer);
+  const style = resolveShapeAnnotationStyle(layer);
 
   return (
     <SettingSection
-      title={
-        layer.shape === "arrow"
-          ? "Arrow"
-          : layer.shape === "line"
-            ? "Line"
-            : layer.shape === "highlighter"
-              ? "Highlight"
-              : "Drawing"
-      }
-      description="Stroke, opacity, and style for the selected annotation"
+      title="Annotation style"
+      description="Professional color, stroke, shadow, and glow controls"
     >
-      <div className="space-y-3">
-        <ColorControl
-          label={layer.shape === "highlighter" ? "Highlight color" : "Stroke color"}
-          value={layer.shape === "highlighter" ? layer.fill : strokeColor}
-          onChange={(color) =>
-            onUpdateLayer(
-              layer.id,
-              layer.shape === "highlighter"
-                ? { fill: color, strokeColor: color }
-                : { strokeColor: color, fill: color },
-            )
-          }
-        />
-        <RangeControl
-          label="Stroke width"
-          value={layer.strokeWidth}
-          min={1}
-          max={48}
-          step={1}
-          onChange={(strokeWidth) =>
-            onUpdateLayer(layer.id, { strokeWidth }, false)
-          }
-          onHistoryCheckpoint={onHistoryCheckpoint}
-        />
-        <RangeControl
-          label="Opacity"
-          value={layer.opacity}
-          min={0.05}
-          max={1}
-          step={0.01}
-          onChange={(opacity) => onUpdateLayer(layer.id, { opacity }, false)}
-          onHistoryCheckpoint={onHistoryCheckpoint}
-          formatValue={(value) => `${Math.round(value * 100)}%`}
-        />
-        {layer.shape === "line" || layer.shape === "arrow" ? (
-          <ToggleControl
-            label="Dashed stroke"
-            checked={layer.dashed ?? false}
-            onChange={(dashed) => onUpdateLayer(layer.id, { dashed })}
-          />
-        ) : null}
-        {layer.shape === "arrow" ? (
-          <RangeControl
-            label="Arrow head size"
-            value={layer.arrowHeadSize ?? 14}
-            min={8}
-            max={32}
-            step={1}
-            onChange={(arrowHeadSize) =>
-              onUpdateLayer(layer.id, { arrowHeadSize }, false)
-            }
-            onHistoryCheckpoint={onHistoryCheckpoint}
-          />
-        ) : null}
-        {layer.shape === "freehand" || layer.shape === "highlighter" ? (
-          <RangeControl
-            label="Smoothing"
-            value={layer.tension ?? 0.45}
-            min={0}
-            max={1}
-            step={0.05}
-            onChange={(tension) => onUpdateLayer(layer.id, { tension }, false)}
-            onHistoryCheckpoint={onHistoryCheckpoint}
-          />
-        ) : null}
-      </div>
+      <AnnotationStylePanel
+        style={style}
+        context={shapeToStyleContext(layer.shape)}
+        compact
+        onHistoryCheckpoint={onHistoryCheckpoint}
+        onChange={(update) => {
+          const merged = normalizeAnnotationStyle({
+            ...style,
+            ...update,
+            shadow: update.shadow
+              ? { ...style.shadow, ...update.shadow }
+              : style.shadow,
+            glow: update.glow ? { ...style.glow, ...update.glow } : style.glow,
+          });
+          onUpdateLayer(
+            layer.id,
+            applyAnnotationStyleToShapeLayer(merged, layer.shape),
+            false,
+          );
+        }}
+      />
     </SettingSection>
   );
 }
@@ -399,10 +368,14 @@ function CalloutControls({
   onUpdateLayer: EditorControlsPanelProps["onUpdateLayer"];
   onHistoryCheckpoint: () => void;
 }) {
+  const style = resolveCalloutAnnotationStyle(layer);
+  const context: AnnotationStylePanelContext =
+    layer.calloutType === "numbered-marker" ? "marker" : "callout";
+
   return (
     <SettingSection
       title="Callout"
-      description="Edit annotation text and colors"
+      description="Edit annotation text and styling"
     >
       <div className="space-y-3">
         <label className="block space-y-1.5">
@@ -417,29 +390,27 @@ function CalloutControls({
             className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-2 text-sm text-[#1d1d1f] outline-none focus:border-[#0071e3]/40"
           />
         </label>
-        <ColorControl
-          label="Fill color"
-          value={layer.fill}
-          onChange={(fill) => onUpdateLayer(layer.id, { fill })}
+        <AnnotationStylePanel
+          style={style}
+          context={context}
+          compact
+          onHistoryCheckpoint={onHistoryCheckpoint}
+          onChange={(update) => {
+            const merged = normalizeAnnotationStyle({
+              ...style,
+              ...update,
+              shadow: update.shadow
+                ? { ...style.shadow, ...update.shadow }
+                : style.shadow,
+              glow: update.glow ? { ...style.glow, ...update.glow } : style.glow,
+            });
+            onUpdateLayer(
+              layer.id,
+              applyAnnotationStyleToCalloutLayer(merged, layer.calloutType),
+              false,
+            );
+          }}
         />
-        <ColorControl
-          label="Text color"
-          value={layer.textColor}
-          onChange={(textColor) => onUpdateLayer(layer.id, { textColor })}
-        />
-        {layer.calloutType !== "numbered-marker" ? (
-          <RangeControl
-            label="Font size"
-            value={layer.fontSize}
-            min={10}
-            max={48}
-            step={1}
-            onChange={(fontSize) =>
-              onUpdateLayer(layer.id, { fontSize }, false)
-            }
-            onHistoryCheckpoint={onHistoryCheckpoint}
-          />
-        ) : null}
       </div>
     </SettingSection>
   );
@@ -454,80 +425,34 @@ function ShapeStyleControls({
   onUpdateLayer: EditorControlsPanelProps["onUpdateLayer"];
   onHistoryCheckpoint: () => void;
 }) {
+  const style = resolveShapeAnnotationStyle(layer);
+
   return (
     <SettingSection
-      title="Shape"
-      description="Fill, stroke, corners, and shadow"
+      title="Shape style"
+      description="Fill, stroke, shadow, and glow"
     >
-      <div className="space-y-3">
-        <ColorControl
-          label="Fill color"
-          value={layer.fill}
-          onChange={(fill) => onUpdateLayer(layer.id, { fill })}
-        />
-        <ColorControl
-          label="Stroke color"
-          value={layer.strokeColor ?? "#1d1d1f"}
-          onChange={(strokeColor) => onUpdateLayer(layer.id, { strokeColor })}
-        />
-        <RangeControl
-          label="Stroke width"
-          value={layer.strokeWidth}
-          min={0}
-          max={24}
-          step={1}
-          onChange={(strokeWidth) =>
-            onUpdateLayer(layer.id, { strokeWidth }, false)
-          }
-          onHistoryCheckpoint={onHistoryCheckpoint}
-        />
-        {layer.shape === "rectangle" ? (
-          <RangeControl
-            label="Corner radius"
-            value={layer.cornerRadius ?? 0}
-            min={0}
-            max={120}
-            step={1}
-            onChange={(cornerRadius) =>
-              onUpdateLayer(layer.id, { cornerRadius }, false)
-            }
-            onHistoryCheckpoint={onHistoryCheckpoint}
-          />
-        ) : null}
-        <RangeControl
-          label="Shadow blur"
-          value={layer.shadowBlur ?? 0}
-          min={0}
-          max={48}
-          step={1}
-          onChange={(shadowBlur) =>
-            onUpdateLayer(layer.id, { shadowBlur }, false)
-          }
-          onHistoryCheckpoint={onHistoryCheckpoint}
-        />
-        {(layer.shadowBlur ?? 0) > 0 ? (
-          <>
-            <RangeControl
-              label="Shadow offset"
-              value={layer.shadowOffsetY ?? 0}
-              min={0}
-              max={32}
-              step={1}
-              onChange={(shadowOffsetY) =>
-                onUpdateLayer(layer.id, { shadowOffsetY }, false)
-              }
-              onHistoryCheckpoint={onHistoryCheckpoint}
-            />
-            <ColorControl
-              label="Shadow color"
-              value={layer.shadowColor ?? "#000000"}
-              onChange={(shadowColor) =>
-                onUpdateLayer(layer.id, { shadowColor })
-              }
-            />
-          </>
-        ) : null}
-      </div>
+      <AnnotationStylePanel
+        style={style}
+        context={shapeToStyleContext(layer.shape)}
+        compact
+        onHistoryCheckpoint={onHistoryCheckpoint}
+        onChange={(update) => {
+          const merged = normalizeAnnotationStyle({
+            ...style,
+            ...update,
+            shadow: update.shadow
+              ? { ...style.shadow, ...update.shadow }
+              : style.shadow,
+            glow: update.glow ? { ...style.glow, ...update.glow } : style.glow,
+          });
+          onUpdateLayer(
+            layer.id,
+            applyAnnotationStyleToShapeLayer(merged, layer.shape),
+            false,
+          );
+        }}
+      />
     </SettingSection>
   );
 }
@@ -711,137 +636,6 @@ function LayerTransformControls({
           onChange={(rotation) => updateTransform({ rotation }, false)}
           onHistoryCheckpoint={onHistoryCheckpoint}
           formatValue={(value) => `${Math.round(value)}°`}
-        />
-      </div>
-    </SettingSection>
-  );
-}
-
-function TextStyleControls({
-  layer,
-  onUpdateLayer,
-  onHistoryCheckpoint,
-}: {
-  layer: TextEditorLayer;
-  onUpdateLayer: EditorControlsPanelProps["onUpdateLayer"];
-  onHistoryCheckpoint: () => void;
-}) {
-  const setFontStyle = (nextStyle: TextFontStyle) => {
-    onUpdateLayer(layer.id, { fontStyle: nextStyle });
-  };
-
-  const isBold =
-    layer.fontStyle === "bold" || layer.fontStyle === "bold italic";
-  const isItalic =
-    layer.fontStyle === "italic" || layer.fontStyle === "bold italic";
-
-  const toggleBold = () => {
-    const nextBold = !isBold;
-    const nextStyle: TextFontStyle =
-      nextBold && isItalic
-        ? "bold italic"
-        : nextBold
-          ? "bold"
-          : isItalic
-            ? "italic"
-            : "normal";
-    setFontStyle(nextStyle);
-  };
-
-  const toggleItalic = () => {
-    const nextItalic = !isItalic;
-    const nextStyle: TextFontStyle =
-      isBold && nextItalic
-        ? "bold italic"
-        : isBold
-          ? "bold"
-          : nextItalic
-            ? "italic"
-            : "normal";
-    setFontStyle(nextStyle);
-  };
-
-  return (
-    <SettingSection title="Text" description="Edit content, typography, and color">
-      <div className="space-y-3">
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-[#1d1d1f]">Content</span>
-          <textarea
-            value={layer.text}
-            rows={4}
-            onFocus={onHistoryCheckpoint}
-            onChange={(event) =>
-              onUpdateLayer(layer.id, { text: event.target.value }, false)
-            }
-            className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-2 text-sm text-[#1d1d1f] outline-none focus:border-[#0071e3]/40"
-          />
-        </label>
-
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium text-[#1d1d1f]">Font family</span>
-          <select
-            value={layer.fontFamily ?? DEFAULT_TEXT_FONT_FAMILY}
-            onChange={(event) =>
-              onUpdateLayer(layer.id, { fontFamily: event.target.value })
-            }
-            className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-2 text-sm text-[#1d1d1f] outline-none focus:border-[#0071e3]/40"
-          >
-            {TEXT_FONT_FAMILY_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            aria-pressed={isBold}
-            onClick={toggleBold}
-            className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
-              isBold
-                ? "border-[#0071e3] bg-[#0071e3]/[0.08] text-[#0071e3]"
-                : "border-black/[0.06] bg-[#f5f5f7] text-[#1d1d1f]"
-            }`}
-          >
-            Bold
-          </button>
-          <button
-            type="button"
-            aria-pressed={isItalic}
-            onClick={toggleItalic}
-            className={`rounded-lg border px-3 py-2 text-xs font-semibold italic transition-colors ${
-              isItalic
-                ? "border-[#0071e3] bg-[#0071e3]/[0.08] text-[#0071e3]"
-                : "border-black/[0.06] bg-[#f5f5f7] text-[#1d1d1f]"
-            }`}
-          >
-            Italic
-          </button>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2">
-          {(["left", "center", "right"] as TextAlign[]).map((align) => (
-            <button
-              key={align}
-              type="button"
-              onClick={() => onUpdateLayer(layer.id, { align })}
-              className={`rounded-lg border px-2 py-2 text-xs font-medium capitalize transition-colors ${
-                (layer.align ?? "left") === align
-                  ? "border-[#0071e3] bg-[#0071e3]/[0.08] text-[#0071e3]"
-                  : "border-black/[0.06] bg-[#f5f5f7] text-[#1d1d1f]"
-              }`}
-            >
-              {align}
-            </button>
-          ))}
-        </div>
-
-        <ColorControl
-          label="Text color"
-          value={layer.fill}
-          onChange={(fill) => onUpdateLayer(layer.id, { fill })}
         />
       </div>
     </SettingSection>
@@ -1229,14 +1023,6 @@ export function EditorControlsPanel({
               onUpdateLayer={onUpdateLayer}
               onHistoryCheckpoint={onHistoryCheckpoint}
             />
-
-            {selectedLayer.type === "text" ? (
-              <TextStyleControls
-                layer={selectedLayer}
-                onUpdateLayer={onUpdateLayer}
-                onHistoryCheckpoint={onHistoryCheckpoint}
-              />
-            ) : null}
 
             {selectedLayer.type === "callout" ? (
               <CalloutControls

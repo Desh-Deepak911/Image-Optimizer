@@ -39,7 +39,15 @@ import {
   usesImageClipMask,
 } from "@/lib/konva/imageLayerRender";
 import { type LayerBounds } from "@/lib/konva/layerBounds";
-import { getStrokeColor, EDITOR_TOOL_CURSORS, isAnnotationTool } from "@/lib/konva/annotationTools";
+import { EDITOR_TOOL_CURSORS, isAnnotationTool } from "@/lib/konva/annotationTools";
+import {
+  getArrowHeadDimensions,
+  getEffectiveStrokeColor,
+  getKonvaEffectProps,
+  getStrokeDashPattern,
+  resolveCalloutAnnotationStyle,
+  resolveShapeAnnotationStyle,
+} from "@/lib/konva/annotationStyle";
 import {
   snapLayerPosition,
   type SnapGuideLine,
@@ -722,6 +730,12 @@ function ShapeLayerNode({
     onContextMenu(layer.id, event.evt.clientX, event.evt.clientY);
   };
 
+  const style = resolveShapeAnnotationStyle(layer);
+  const strokeColor = getEffectiveStrokeColor(style);
+  const dash = getStrokeDashPattern(style.strokeDash);
+  const vectorPoints = layer.points ?? [0, 0, layer.width, layer.height];
+  const effectProps = getKonvaEffectProps(style);
+
   const commonProps = {
     opacity: layer.opacity,
     rotation: layer.rotation,
@@ -732,19 +746,8 @@ function ShapeLayerNode({
     onTransformEnd: (event: Konva.KonvaEventObject<Event>) => {
       applyTransformEnd(event.target, layer, onChange);
     },
-    ...(layer.shadowBlur && layer.shadowBlur > 0
-      ? {
-          shadowBlur: layer.shadowBlur,
-          shadowColor: layer.shadowColor ?? "#000000",
-          shadowOffsetY: layer.shadowOffsetY ?? 0,
-          shadowOpacity: layer.shadowOpacity ?? 0.35,
-        }
-      : {}),
+    ...effectProps,
   };
-
-  const strokeColor = getStrokeColor(layer);
-  const dash = layer.dashed ? [10, 6] : undefined;
-  const vectorPoints = layer.points ?? [0, 0, layer.width, layer.height];
 
   if (layer.shape === "rectangle") {
     return (
@@ -754,10 +757,13 @@ function ShapeLayerNode({
         y={layer.y}
         width={layer.width}
         height={layer.height}
-        fill={layer.fill}
-        stroke={layer.strokeColor}
-        strokeWidth={layer.strokeWidth}
-        cornerRadius={layer.cornerRadius ?? 0}
+        fill={style.fill}
+        stroke={style.strokeColor}
+        strokeWidth={style.strokeWidth}
+        dash={dash}
+        cornerRadius={style.cornerRadius ?? 0}
+        lineCap={style.lineCap}
+        lineJoin={style.lineJoin}
         {...commonProps}
       />
     );
@@ -772,9 +778,10 @@ function ShapeLayerNode({
         x={layer.x + layer.width / 2}
         y={layer.y + layer.height / 2}
         radius={radius}
-        fill={layer.fill}
-        stroke={layer.strokeColor}
-        strokeWidth={layer.strokeWidth}
+        fill={style.fill}
+        stroke={style.strokeColor}
+        strokeWidth={style.strokeWidth}
+        dash={dash}
         {...commonProps}
         onDragMove={commonProps.onDragMove}
         onDragEnd={commonProps.onDragEnd}
@@ -786,6 +793,8 @@ function ShapeLayerNode({
   }
 
   if (layer.shape === "arrow") {
+    const arrowHead = getArrowHeadDimensions(style);
+
     return (
       <Arrow
         ref={shapeRef as React.RefObject<Konva.Arrow>}
@@ -793,12 +802,15 @@ function ShapeLayerNode({
         y={layer.y}
         points={vectorPoints}
         stroke={strokeColor}
-        fill={strokeColor}
+        fill={arrowHead.fill}
         strokeWidth={layer.strokeWidth}
-        pointerLength={layer.arrowHeadSize ?? 14}
-        pointerWidth={layer.arrowHeadSize ?? 14}
+        pointerLength={arrowHead.pointerLength}
+        pointerWidth={arrowHead.pointerWidth}
+        pointerAtBeginning={style.doubleHeaded}
+        pointerAtEnding
         dash={dash}
-        lineCap="round"
+        lineCap={style.lineCap}
+        lineJoin={style.lineJoin}
         hitStrokeWidth={20}
         {...commonProps}
       />
@@ -812,13 +824,14 @@ function ShapeLayerNode({
         x={layer.x}
         y={layer.y}
         points={vectorPoints}
-        stroke={layer.shape === "highlighter" ? layer.fill : strokeColor}
+        stroke={layer.shape === "highlighter" ? style.fill : strokeColor}
         strokeWidth={layer.strokeWidth}
-        tension={layer.tension ?? 0.45}
-        lineCap="round"
-        lineJoin="round"
+        tension={style.tension}
+        lineCap={style.lineCap}
+        lineJoin={style.lineJoin}
+        dash={dash}
         globalCompositeOperation={
-          layer.blendMode === "multiply" ? "multiply" : undefined
+          style.blendMode === "multiply" ? "multiply" : undefined
         }
         hitStrokeWidth={Math.max(layer.strokeWidth, 16)}
         {...commonProps}
@@ -835,7 +848,8 @@ function ShapeLayerNode({
       stroke={strokeColor}
       strokeWidth={layer.strokeWidth}
       dash={dash}
-      lineCap="round"
+      lineCap={style.lineCap}
+      lineJoin={style.lineJoin}
       hitStrokeWidth={20}
       {...commonProps}
     />
@@ -888,6 +902,11 @@ function CalloutLayerNode({
     onContextMenu(layer.id, event.evt.clientX, event.evt.clientY);
   };
 
+  const style = resolveCalloutAnnotationStyle(layer);
+  const effectProps = getKonvaEffectProps(style);
+  const borderColor = style.borderColor || style.strokeColor;
+  const borderWidth = style.borderWidth;
+
   const commonGroupProps = {
     x: layer.x,
     y: layer.y,
@@ -911,20 +930,21 @@ function CalloutLayerNode({
           x={layer.width / 2}
           y={layer.height / 2}
           radius={radius}
-          fill={layer.fill}
-          stroke="#1d1d1f"
-          strokeWidth={2}
+          fill={style.fill}
+          stroke={borderColor}
+          strokeWidth={borderWidth}
+          {...effectProps}
           listening={false}
         />
         <Text
           x={0}
-          y={layer.height / 2 - layer.fontSize / 2}
+          y={layer.height / 2 - style.fontSize / 2}
           width={layer.width}
           text={layer.text}
-          fontSize={layer.fontSize}
+          fontSize={style.fontSize}
           fontStyle="bold"
           align="center"
-          fill={layer.textColor}
+          fill={style.textColor}
           listening={false}
         />
       </Group>
@@ -932,7 +952,8 @@ function CalloutLayerNode({
   }
 
   const cornerRadius =
-    layer.cornerRadius ?? (layer.calloutType === "label" ? 999 : 12);
+    style.cornerRadius ??
+    (layer.calloutType === "label" ? 999 : 12);
 
   return (
     <Group ref={groupRef} {...commonGroupProps}>
@@ -941,14 +962,11 @@ function CalloutLayerNode({
         y={0}
         width={layer.width}
         height={layer.height - (layer.calloutType === "speech-bubble" ? 12 : 0)}
-        fill={layer.fill}
-        stroke="#1d1d1f"
-        strokeWidth={1.5}
+        fill={style.fill}
+        stroke={borderColor}
+        strokeWidth={borderWidth}
         cornerRadius={cornerRadius}
-        shadowBlur={8}
-        shadowColor="#000000"
-        shadowOffsetY={2}
-        shadowOpacity={0.12}
+        {...effectProps}
         listening={false}
       />
       {layer.calloutType === "speech-bubble" ? (
@@ -961,10 +979,10 @@ function CalloutLayerNode({
             layer.width * 0.35,
             layer.height - 12,
           ]}
-          fill={layer.fill}
+          fill={style.fill}
           closed
-          stroke="#1d1d1f"
-          strokeWidth={1.5}
+          stroke={borderColor}
+          strokeWidth={borderWidth}
           listening={false}
         />
       ) : null}
@@ -974,8 +992,8 @@ function CalloutLayerNode({
         width={layer.width - 24}
         height={layer.height - 24}
         text={layer.text}
-        fontSize={layer.fontSize}
-        fill={layer.textColor}
+        fontSize={style.fontSize}
+        fill={style.textColor}
         align="center"
         verticalAlign="middle"
         listening={false}
@@ -1026,7 +1044,7 @@ interface KonvaEditorStageProps {
     height: number;
   }) => void;
   editorTool?: EditorToolId;
-  drawingSettings?: DrawingToolSettings;
+  annotationStyle?: DrawingToolSettings;
   onLineComplete?: (geometry: {
     shape: "line" | "arrow";
     x: number;
@@ -1071,7 +1089,7 @@ export function KonvaEditorStage({
   onCleanupStrokePreview,
   onCoverPatchComplete,
   editorTool = "select",
-  drawingSettings,
+  annotationStyle,
   onLineComplete,
   onFreehandComplete,
   onCalloutComplete,
@@ -1268,6 +1286,10 @@ export function KonvaEditorStage({
           scaleX={effectiveScale}
           scaleY={effectiveScale}
           onMouseDown={(event) => {
+            if (isAnnotationToolActive) {
+              return;
+            }
+
             const target = event.target;
             const clickedEmpty =
               target === target.getStage() ||
@@ -1279,6 +1301,10 @@ export function KonvaEditorStage({
             }
           }}
           onTouchStart={(event) => {
+            if (isAnnotationToolActive) {
+              return;
+            }
+
             const target = event.target;
             const clickedEmpty =
               target === target.getStage() ||
@@ -1391,24 +1417,9 @@ export function KonvaEditorStage({
               />
             ) : null}
 
-            {isAnnotationToolActive &&
-            drawingSettings &&
-            onLineComplete &&
-            onFreehandComplete &&
-            onCalloutComplete ? (
-              <AnnotationDrawOverlay
-                editorTool={editorTool}
-                drawingSettings={drawingSettings}
-                stageWidth={stageWidth}
-                stageHeight={stageHeight}
-                onLineComplete={onLineComplete}
-                onFreehandComplete={onFreehandComplete}
-                onCalloutComplete={onCalloutComplete}
-              />
-            ) : null}
-
             <Transformer
               ref={transformerRef}
+              listening={!isAnnotationToolActive}
               rotateEnabled={
                 !selectedLayer?.locked &&
                 !cropEditingLayerId &&
@@ -1454,6 +1465,22 @@ export function KonvaEditorStage({
                 return newBox;
               }}
             />
+
+            {isAnnotationToolActive &&
+            annotationStyle &&
+            onLineComplete &&
+            onFreehandComplete &&
+            onCalloutComplete ? (
+              <AnnotationDrawOverlay
+                editorTool={editorTool}
+                annotationStyle={annotationStyle}
+                stageWidth={stageWidth}
+                stageHeight={stageHeight}
+                onLineComplete={onLineComplete}
+                onFreehandComplete={onFreehandComplete}
+                onCalloutComplete={onCalloutComplete}
+              />
+            ) : null}
           </Layer>
         </Stage>
       </div>

@@ -19,8 +19,14 @@ import type Konva from "konva";
 import { getEditorTemplate } from "@/lib/konva/editorTemplates";
 import type { AdvancedEditorSettings, CleanupToolId, EditorToolId } from "@/types/konvaEditor";
 import {
-  DEFAULT_DRAWING_TOOL_SETTINGS,
-} from "@/types/konvaEditor";
+  DEFAULT_ANNOTATION_STYLE,
+} from "@/types/annotationStyle";
+import {
+  loadLastAnnotationStyle,
+  normalizeAnnotationStyle,
+  saveLastAnnotationStyle,
+} from "@/lib/konva/annotationStyle";
+import type { AnnotationStyle } from "@/types/annotationStyle";
 import type { EditorDocumentState } from "@/hooks/useKonvaLayers";
 
 export function useAdvancedEditor() {
@@ -29,9 +35,9 @@ export function useAdvancedEditor() {
   const [editorTool, setEditorTool] = useState<EditorToolId>("select");
   const [brushSize, setBrushSize] = useState(DEFAULT_CLEANUP_BRUSH_SIZE);
   const [brushIntensity, setBrushIntensity] = useState(DEFAULT_BLUR_INTENSITY);
-  const [drawingSettings, setDrawingSettings] = useState({
-    ...DEFAULT_DRAWING_TOOL_SETTINGS,
-  });
+  const [annotationStyle, setAnnotationStyle] = useState<AnnotationStyle>(() =>
+    loadLastAnnotationStyle(),
+  );
 
   const {
     exportError,
@@ -170,7 +176,7 @@ export function useAdvancedEditor() {
     setEditorTool("select");
     setBrushSize(DEFAULT_CLEANUP_BRUSH_SIZE);
     setBrushIntensity(DEFAULT_BLUR_INTENSITY);
-    setDrawingSettings({ ...DEFAULT_DRAWING_TOOL_SETTINGS });
+    setAnnotationStyle({ ...DEFAULT_ANNOTATION_STYLE });
   }, [layersState, projects, resetExportState, resetSettings]);
 
   const handleCleanupToolChange = useCallback((tool: CleanupToolId) => {
@@ -192,15 +198,22 @@ export function useAdvancedEditor() {
     }
   }, []);
 
-  const updateDrawingSetting = useCallback(
-    <K extends keyof typeof drawingSettings>(
-      key: K,
-      value: (typeof drawingSettings)[K],
-    ) => {
-      setDrawingSettings((previous) => ({ ...previous, [key]: value }));
-    },
-    [],
-  );
+  const updateAnnotationStyle = useCallback((update: Partial<AnnotationStyle>) => {
+    setAnnotationStyle((previous) => {
+      const next = normalizeAnnotationStyle({
+        ...previous,
+        ...update,
+        shadow: update.shadow
+          ? { ...previous.shadow, ...update.shadow }
+          : previous.shadow,
+        glow: update.glow ? { ...previous.glow, ...update.glow } : previous.glow,
+      });
+      saveLastAnnotationStyle(next);
+      return next;
+    });
+  }, []);
+
+  const updateDrawingSetting = updateAnnotationStyle;
 
   const resetToSelectTool = useCallback(() => {
     setEditorTool("select");
@@ -226,9 +239,11 @@ export function useAdvancedEditor() {
     editorTool,
     brushSize,
     brushIntensity,
-    drawingSettings,
+    annotationStyle,
+    drawingSettings: annotationStyle,
     setCleanupTool: handleCleanupToolChange,
     setEditorTool: handleEditorToolChange,
+    updateAnnotationStyle,
     updateDrawingSetting,
     resetToSelectTool,
     setBrushSize,

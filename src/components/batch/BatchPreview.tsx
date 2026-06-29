@@ -49,15 +49,18 @@ export function BatchPreview({ image, settings }: BatchPreviewProps) {
 
   useEffect(() => {
     let cancelled = false;
-    const img = new window.Image();
 
-    const render = () => {
+    const render = (loadedImage: HTMLImageElement) => {
+      if (cancelled) {
+        return;
+      }
+
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d", {
         alpha: settings.exportFormat !== "jpeg",
       });
 
-      if (!canvas || !ctx) {
+      if (!canvas || !ctx || loadedImage.naturalWidth <= 0) {
         return;
       }
 
@@ -87,27 +90,40 @@ export function BatchPreview({ image, settings }: BatchPreviewProps) {
         containBackgroundColor: settings.containBackgroundColor,
       });
 
-      drawFrame(ctx, img, input, framing.frame);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawFrame(ctx, loadedImage, input, framing.frame);
     };
 
+    const cachedImage = imageElementRef.current;
+    if (
+      cachedImage &&
+      cachedImage.src === image.previewUrl &&
+      cachedImage.complete &&
+      cachedImage.naturalWidth > 0
+    ) {
+      render(cachedImage);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const img = new window.Image();
     img.onload = () => {
       if (cancelled) {
         return;
       }
 
       imageElementRef.current = img;
-      render();
+      render(img);
     };
 
     img.onerror = () => {
-      imageElementRef.current = null;
+      if (!cancelled) {
+        imageElementRef.current = null;
+      }
     };
 
-    if (imageElementRef.current?.src === image.previewUrl) {
-      render();
-    } else {
-      img.src = image.previewUrl;
-    }
+    img.src = image.previewUrl;
 
     return () => {
       cancelled = true;

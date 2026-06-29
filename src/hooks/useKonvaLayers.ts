@@ -29,11 +29,13 @@ import {
 import {
   createImageLayer,
   createLayerId,
+  createCoverPatchLayer,
   createShapeLayer,
   createTextLayer,
   DEFAULT_IMAGE_FILTERS,
   DEFAULT_IMAGE_LAYER_STYLE,
   DEFAULT_STAGE_BACKGROUND,
+  type CleanupBrushStroke,
   type EditorLayer,
   type EditorLayerUpdate,
   type ImageEditorLayer,
@@ -42,6 +44,7 @@ import {
   type StageBackground,
 } from "@/types/konvaEditor";
 import { createFullImageCrop } from "@/lib/konva/imageCrop";
+import { createCleanupStrokeId } from "@/lib/konva/cleanupEffects";
 import type { UploadedImage } from "@/types/optimizer";
 
 export interface EditorDocumentState {
@@ -252,12 +255,13 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
           }
 
           if (layer.type === "image") {
-            const { filters, style, ...rest } = update;
+            const { filters, style, cleanupStrokes, ...rest } = update;
             return {
               ...layer,
               ...rest,
               ...(filters ? { filters: { ...layer.filters, ...filters } } : {}),
               ...(style ? { style: { ...layer.style, ...style } } : {}),
+              ...(cleanupStrokes !== undefined ? { cleanupStrokes } : {}),
             };
           }
 
@@ -328,6 +332,11 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
                 filters: { ...source.filters },
                 style: { ...source.style },
                 crop: source.crop ? { ...source.crop } : undefined,
+                cleanupStrokes: source.cleanupStrokes?.map((stroke) => ({
+                  ...stroke,
+                  id: createCleanupStrokeId(),
+                  points: [...stroke.points],
+                })),
               }
             : {
                 ...source,
@@ -905,9 +914,42 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
         filters: { ...DEFAULT_IMAGE_FILTERS },
         style: { ...DEFAULT_IMAGE_LAYER_STYLE },
         crop: createFullImageCrop(layer.image.width, layer.image.height),
+        cleanupStrokes: [],
       });
     },
     [layers, updateLayerProperties],
+  );
+
+  const previewCleanupStrokes = useCallback(
+    (layerId: string, strokes: CleanupBrushStroke[]) => {
+      updateLayerProperties(layerId, { cleanupStrokes: strokes }, false);
+    },
+    [updateLayerProperties],
+  );
+
+  const clearCleanupStrokes = useCallback(
+    (layerId: string) => {
+      updateLayerProperties(layerId, { cleanupStrokes: [] });
+    },
+    [updateLayerProperties],
+  );
+
+  const addCoverPatchLayer = useCallback(
+    (rect: { x: number; y: number; width: number; height: number }) => {
+      mutateDocument((previous) => {
+        const patch = createCoverPatchLayer({
+          ...rect,
+          layerIndex: previous.layers.length,
+        });
+
+        return {
+          ...previous,
+          layers: [...previous.layers, patch],
+          selectedLayerId: patch.id,
+        };
+      });
+    },
+    [mutateDocument],
   );
 
   const resetLayerCrop = useCallback(
@@ -988,6 +1030,9 @@ export function useKonvaLayers(options: UseKonvaLayersOptions) {
     fitLayerToCanvasMode,
     resetLayerEffects,
     resetLayerCrop,
+    previewCleanupStrokes,
+    clearCleanupStrokes,
+    addCoverPatchLayer,
     setBackground,
     moveLayerUp: (layerId: string) => moveLayer(layerId, "up"),
     moveLayerDown: (layerId: string) => moveLayer(layerId, "down"),

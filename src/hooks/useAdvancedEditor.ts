@@ -1,10 +1,15 @@
 "use client";
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useAdvancedEditorSettings } from "@/hooks/useAdvancedEditorSettings";
 import { useExportFlow } from "@/hooks/useExportFlow";
 import { useEditorProjects } from "@/hooks/useEditorProjects";
 import { useKonvaLayers } from "@/hooks/useKonvaLayers";
+import {
+  DEFAULT_BLUR_INTENSITY,
+  DEFAULT_CLEANUP_BRUSH_SIZE,
+  DEFAULT_PIXELATE_INTENSITY,
+} from "@/lib/konva/cleanupTools";
 import {
   downloadKonvaExport,
   exportKonvaStageToBlob,
@@ -12,11 +17,14 @@ import {
 } from "@/lib/konva/exportKonvaStage";
 import type Konva from "konva";
 import { getEditorTemplate } from "@/lib/konva/editorTemplates";
-import type { AdvancedEditorSettings } from "@/types/konvaEditor";
+import type { AdvancedEditorSettings, CleanupToolId } from "@/types/konvaEditor";
 import type { EditorDocumentState } from "@/hooks/useKonvaLayers";
 
 export function useAdvancedEditor() {
   const stageRef = useRef<Konva.Stage | null>(null);
+  const [cleanupTool, setCleanupTool] = useState<CleanupToolId>("select");
+  const [brushSize, setBrushSize] = useState(DEFAULT_CLEANUP_BRUSH_SIZE);
+  const [brushIntensity, setBrushIntensity] = useState(DEFAULT_BLUR_INTENSITY);
 
   const {
     exportError,
@@ -151,7 +159,19 @@ export function useAdvancedEditor() {
     resetSettings();
     resetExportState();
     projects.markProjectUntitled();
+    setCleanupTool("select");
+    setBrushSize(DEFAULT_CLEANUP_BRUSH_SIZE);
+    setBrushIntensity(DEFAULT_BLUR_INTENSITY);
   }, [layersState, projects, resetExportState, resetSettings]);
+
+  const handleCleanupToolChange = useCallback((tool: CleanupToolId) => {
+    setCleanupTool(tool);
+    if (tool === "blur-brush") {
+      setBrushIntensity(DEFAULT_BLUR_INTENSITY);
+    } else if (tool === "pixelate-brush") {
+      setBrushIntensity(DEFAULT_PIXELATE_INTENSITY);
+    }
+  }, []);
 
   return {
     settings,
@@ -168,6 +188,12 @@ export function useAdvancedEditor() {
     resetAll,
     clearExportError,
     clearExportSuccess,
+    cleanupTool,
+    brushSize,
+    brushIntensity,
+    setCleanupTool: handleCleanupToolChange,
+    setBrushSize,
+    setBrushIntensity,
     ...layersState,
     ...projects,
   };

@@ -13,11 +13,13 @@ import type {
   ImageEditorLayer,
   ImageFilters,
   ImageMaskType,
+  ShapeEditorLayer,
   StageBackground,
 } from "@/types/konvaEditor";
 import {
   DEFAULT_IMAGE_FILTERS,
   DEFAULT_IMAGE_LAYER_STYLE,
+  isCoverPatchLayer,
 } from "@/types/konvaEditor";
 
 interface EditorControlsPanelProps {
@@ -281,6 +283,76 @@ function ImageMaskControls({
             {option.label}
           </button>
         ))}
+      </div>
+    </SettingSection>
+  );
+}
+
+function CoverPatchControls({
+  layer,
+  onUpdateLayer,
+  onHistoryCheckpoint,
+}: {
+  layer: ShapeEditorLayer;
+  onUpdateLayer: EditorControlsPanelProps["onUpdateLayer"];
+  onHistoryCheckpoint: () => void;
+}) {
+  return (
+    <SettingSection
+      title="Cover patch"
+      description="Adjust fill, opacity, corners, and shadow"
+    >
+      <div className="space-y-3">
+        <ColorControl
+          label="Fill color"
+          value={layer.fill}
+          onChange={(fill) => onUpdateLayer(layer.id, { fill })}
+        />
+        <RangeControl
+          label="Corner radius"
+          value={layer.cornerRadius ?? 0}
+          min={0}
+          max={64}
+          step={1}
+          onChange={(cornerRadius) =>
+            onUpdateLayer(layer.id, { cornerRadius }, false)
+          }
+          onHistoryCheckpoint={onHistoryCheckpoint}
+        />
+        <RangeControl
+          label="Shadow blur"
+          value={layer.shadowBlur ?? 0}
+          min={0}
+          max={48}
+          step={1}
+          onChange={(shadowBlur) =>
+            onUpdateLayer(layer.id, { shadowBlur }, false)
+          }
+          onHistoryCheckpoint={onHistoryCheckpoint}
+        />
+        <RangeControl
+          label="Shadow offset"
+          value={layer.shadowOffsetY ?? 0}
+          min={0}
+          max={32}
+          step={1}
+          onChange={(shadowOffsetY) =>
+            onUpdateLayer(layer.id, { shadowOffsetY }, false)
+          }
+          onHistoryCheckpoint={onHistoryCheckpoint}
+        />
+        <RangeControl
+          label="Shadow opacity"
+          value={layer.shadowOpacity ?? 0}
+          min={0}
+          max={1}
+          step={0.01}
+          onChange={(shadowOpacity) =>
+            onUpdateLayer(layer.id, { shadowOpacity }, false)
+          }
+          onHistoryCheckpoint={onHistoryCheckpoint}
+          formatValue={(value) => `${Math.round(value * 100)}%`}
+        />
       </div>
     </SettingSection>
   );
@@ -706,35 +778,50 @@ export function EditorControlsPanel({
             ) : null}
 
             {selectedLayer.type === "shape" ? (
-              <SettingSection
-                title="Shape"
-                description="Fill and stroke for the selected shape"
-              >
-                <div className="space-y-3">
-                  <ColorControl
-                    label={
-                      selectedLayer.shape === "line" ? "Line color" : "Fill color"
-                    }
-                    value={selectedLayer.fill}
-                    onChange={(fill) =>
-                      onUpdateLayer(selectedLayer.id, { fill })
-                    }
-                  />
-                  {selectedLayer.shape === "line" ? (
-                    <RangeControl
-                      label="Stroke width"
-                      value={selectedLayer.strokeWidth}
-                      min={1}
-                      max={24}
-                      step={1}
-                      onChange={(strokeWidth) =>
-                        onUpdateLayer(selectedLayer.id, { strokeWidth }, false)
+              <>
+                <SettingSection
+                  title="Shape"
+                  description="Fill and stroke for the selected shape"
+                >
+                  <div className="space-y-3">
+                    <ColorControl
+                      label={
+                        selectedLayer.shape === "line"
+                          ? "Line color"
+                          : "Fill color"
                       }
-                      onHistoryCheckpoint={onHistoryCheckpoint}
+                      value={selectedLayer.fill}
+                      onChange={(fill) =>
+                        onUpdateLayer(selectedLayer.id, { fill })
+                      }
                     />
-                  ) : null}
-                </div>
-              </SettingSection>
+                    {selectedLayer.shape === "line" ? (
+                      <RangeControl
+                        label="Stroke width"
+                        value={selectedLayer.strokeWidth}
+                        min={1}
+                        max={24}
+                        step={1}
+                        onChange={(strokeWidth) =>
+                          onUpdateLayer(
+                            selectedLayer.id,
+                            { strokeWidth },
+                            false,
+                          )
+                        }
+                        onHistoryCheckpoint={onHistoryCheckpoint}
+                      />
+                    ) : null}
+                  </div>
+                </SettingSection>
+                {isCoverPatchLayer(selectedLayer) ? (
+                  <CoverPatchControls
+                    layer={selectedLayer}
+                    onUpdateLayer={onUpdateLayer}
+                    onHistoryCheckpoint={onHistoryCheckpoint}
+                  />
+                ) : null}
+              </>
             ) : null}
 
             {selectedLayer.type === "image" ? (

@@ -14,6 +14,8 @@ import {
   Transformer,
 } from "react-konva";
 import { CanvasZoomControls } from "@/components/advanced/CanvasZoomControls";
+import { CleanupBrushOverlay } from "@/components/advanced/CleanupBrushOverlay";
+import { CoverPatchOverlay } from "@/components/advanced/CoverPatchOverlay";
 import { ImageCropEditor } from "@/components/advanced/ImageCropEditor";
 import {
   LayerContextMenu,
@@ -26,6 +28,7 @@ import {
 } from "@/lib/konva/imageFilters";
 import { getStageBackgroundFillProps } from "@/lib/konva/backgroundGradients";
 import { getEffectiveImageCrop } from "@/lib/konva/imageCrop";
+import { buildCleanupImageCanvas } from "@/lib/konva/cleanupEffects";
 import {
   drawImageMaskPath,
   getImageCornerRadius,
@@ -39,6 +42,8 @@ import {
   type SnapGuideLine,
 } from "@/lib/konva/snapGuides";
 import type {
+  CleanupBrushStroke,
+  CleanupToolId,
   EditorLayer,
   ImageEditorLayer,
   ImageSourceCrop,
@@ -215,6 +220,7 @@ interface LayerNodeProps {
   onContextMenu: (layerId: string, clientX: number, clientY: number) => void;
   snapContext: SnapContext;
   cropEditingLayerId?: string | null;
+  isCleanupPainting?: boolean;
 }
 
 function resolveImageStyle(
@@ -280,11 +286,19 @@ function ImageLayerNode({
   onContextMenu,
   snapContext,
   cropEditingLayerId,
+  isCleanupPainting = false,
 }: LayerNodeProps & { layer: ImageEditorLayer }) {
   const groupRef = useRef<Konva.Group>(null);
   const imageRef = useRef<Konva.Image>(null);
   const glowRef = useRef<Konva.Image>(null);
   const [htmlImage, setHtmlImage] = useState<HTMLImageElement | null>(null);
+  const processedCanvas = useMemo(() => {
+    if (!htmlImage || !layer.cleanupStrokes?.length) {
+      return null;
+    }
+
+    return buildCleanupImageCanvas(layer, htmlImage);
+  }, [htmlImage, layer]);
   const dragHandlers = useMemo(
     () => createDragHandlers(layer, snapContext, onChange),
     [layer, onChange, snapContext],
@@ -301,6 +315,7 @@ function ImageLayerNode({
   const useDropShadow = hasActiveDropShadow(style);
   const useGroupWrapper = useClip || useGlow;
   const isCropEditing = cropEditingLayerId === layer.id;
+  const isInteractionLocked = isCropEditing || isCleanupPainting;
   const cornerRadius = getImageCornerRadius(style.mask, style.cornerRadius);
 
   useEffect(() => {
@@ -351,15 +366,25 @@ function ImageLayerNode({
     }
 
     nodes[0]?.getLayer()?.batchDraw();
-  }, [htmlImage, layer.filters, layer.crop, style, crop]);
+  }, [htmlImage, layer.filters, layer.crop, layer.cleanupStrokes, style, crop, processedCanvas]);
 
   if (!layer.visible || !htmlImage) {
     return null;
   }
 
+  const displayImage = processedCanvas ?? htmlImage;
+  const displayCrop = processedCanvas
+    ? {
+        x: 0,
+        y: 0,
+        width: processedCanvas.width,
+        height: processedCanvas.height,
+      }
+    : crop;
+
   const sharedImageProps = {
-    image: htmlImage,
-    crop,
+    image: displayImage,
+    crop: displayCrop,
     width: layer.width,
     height: layer.height,
   };
@@ -377,7 +402,7 @@ function ImageLayerNode({
       shadowColor={style.shadowColor}
       shadowOffsetY={style.shadowOffsetY}
       shadowOpacity={useDropShadow ? style.shadowOpacity : 0}
-      listening={!isCropEditing}
+      listening={!isInteractionLocked}
     />
   );
 
@@ -446,7 +471,7 @@ function ImageLayerNode({
           y={layer.y}
           rotation={layer.rotation}
           opacity={layer.opacity}
-          draggable={!layer.locked && !isCropEditing}
+          draggable={!layer.locked && !isInteractionLocked}
           onClick={onSelect}
           onTap={onSelect}
           onContextMenu={(event) => {
@@ -454,7 +479,7 @@ function ImageLayerNode({
             onSelect();
             onContextMenu(layer.id, event.evt.clientX, event.evt.clientY);
           }}
-          {...(isCropEditing ? {} : dragHandlers)}
+          {...(isInteractionLocked ? {} : dragHandlers)}
           onTransformEnd={(event) => {
             applyTransformEnd(event.target, layer, onChange);
           }}
@@ -480,7 +505,7 @@ function ImageLayerNode({
         shadowColor={style.shadowColor}
         shadowOffsetY={style.shadowOffsetY}
         shadowOpacity={useDropShadow ? style.shadowOpacity : 0}
-        draggable={!layer.locked && !isCropEditing}
+        draggable={!layer.locked && !isInteractionLocked}
         onClick={onSelect}
         onTap={onSelect}
         onContextMenu={(event) => {
@@ -488,7 +513,7 @@ function ImageLayerNode({
           onSelect();
           onContextMenu(layer.id, event.evt.clientX, event.evt.clientY);
         }}
-        {...(isCropEditing ? {} : dragHandlers)}
+        {...(isInteractionLocked ? {} : dragHandlers)}
       onTransformEnd={(event) => {
         applyTransformEnd(event.target, layer, onChange);
       }}
@@ -609,6 +634,7 @@ function ShapeLayerNode({
         width={layer.width}
         height={layer.height}
         fill={layer.fill}
+        cornerRadius={layer.cornerRadius ?? 0}
         {...commonProps}
       />
     );
@@ -674,6 +700,20 @@ interface KonvaEditorStageProps {
   getContextMenuItems?: (layerId: string) => LayerContextMenuItem[];
   cropEditingLayerId?: string | null;
   onCropChange?: (layerId: string, crop: ImageSourceCrop) => void;
+  cleanupTool?: CleanupToolId;
+  brushSize?: number;
+  brushIntensity?: number;
+  onCleanupStrokeStart?: () => void;
+  onCleanupStrokePreview?: (
+    layerId: string,
+    strokes: CleanupBrushStroke[],
+  ) => void;
+  onCoverPatchComplete?: (rect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }) => void;
 }
 
 export function KonvaEditorStage({
@@ -688,6 +728,12 @@ export function KonvaEditorStage({
   getContextMenuItems,
   cropEditingLayerId = null,
   onCropChange,
+  cleanupTool = "select",
+  brushSize = 32,
+  brushIntensity = 12,
+  onCleanupStrokeStart,
+  onCleanupStrokePreview,
+  onCoverPatchComplete,
 }: KonvaEditorStageProps) {
   const transformerRef = useRef<Konva.Transformer>(null);
   const nodeMapRef = useRef<Map<string, TransformableNode>>(new Map());
@@ -757,8 +803,15 @@ export function KonvaEditorStage({
     }
 
     const selectedLayer = layers.find((layer) => layer.id === selectedLayerId);
+    const isCleanupToolActive =
+      cleanupTool === "blur-brush" ||
+      cleanupTool === "pixelate-brush" ||
+      cleanupTool === "cover-patch";
     const node =
-      selectedLayer && !selectedLayer.locked && !cropEditingLayerId
+      selectedLayer &&
+      !selectedLayer.locked &&
+      !cropEditingLayerId &&
+      !isCleanupToolActive
         ? nodeMapRef.current.get(selectedLayerId ?? "")
         : null;
 
@@ -769,7 +822,19 @@ export function KonvaEditorStage({
     }
 
     transformer.getLayer()?.batchDraw();
-  }, [cropEditingLayerId, layers, selectedLayerId]);
+  }, [cleanupTool, cropEditingLayerId, layers, selectedLayerId]);
+
+  const selectedLayer = layers.find((layer) => layer.id === selectedLayerId);
+  const selectedImageLayer =
+    selectedLayer?.type === "image" ? selectedLayer : null;
+  const isBlurBrushActive = cleanupTool === "blur-brush";
+  const isPixelateBrushActive = cleanupTool === "pixelate-brush";
+  const isCoverPatchActive = cleanupTool === "cover-patch";
+  const isBrushToolActive = isBlurBrushActive || isPixelateBrushActive;
+  const canPaintSelectedImage =
+    selectedImageLayer !== null &&
+    !selectedImageLayer.locked &&
+    isBrushToolActive;
 
   const snapContext = useMemo<SnapContext>(
     () => ({
@@ -792,7 +857,6 @@ export function KonvaEditorStage({
     [getContextMenuItems],
   );
 
-  const selectedLayer = layers.find((layer) => layer.id === selectedLayerId);
   const contextMenuItems =
     contextMenu && getContextMenuItems
       ? getContextMenuItems(contextMenu.layerId)
@@ -905,6 +969,9 @@ export function KonvaEditorStage({
                 onContextMenu={handleContextMenu}
                 snapContext={snapContext}
                 cropEditingLayerId={cropEditingLayerId}
+                isCleanupPainting={
+                  canPaintSelectedImage && layer.id === selectedImageLayer?.id
+                }
               />
             ))}
 
@@ -929,11 +996,45 @@ export function KonvaEditorStage({
                 })()
               : null}
 
+            {canPaintSelectedImage &&
+            selectedImageLayer &&
+            onCleanupStrokeStart &&
+            onCleanupStrokePreview ? (
+              <CleanupBrushOverlay
+                layer={selectedImageLayer}
+                brushType={isBlurBrushActive ? "blur" : "pixelate"}
+                brushSize={brushSize}
+                intensity={brushIntensity}
+                existingStrokes={selectedImageLayer.cleanupStrokes ?? []}
+                onStrokeStart={onCleanupStrokeStart}
+                onStrokePreview={(strokes) =>
+                  onCleanupStrokePreview(selectedImageLayer.id, strokes)
+                }
+                onStrokeComplete={() => undefined}
+              />
+            ) : null}
+
+            {isCoverPatchActive && onCoverPatchComplete ? (
+              <CoverPatchOverlay
+                stageWidth={stageWidth}
+                stageHeight={stageHeight}
+                onCoverPatchComplete={onCoverPatchComplete}
+              />
+            ) : null}
+
             <Transformer
               ref={transformerRef}
-              rotateEnabled={!selectedLayer?.locked && !cropEditingLayerId}
+              rotateEnabled={
+                !selectedLayer?.locked &&
+                !cropEditingLayerId &&
+                !isBrushToolActive &&
+                !isCoverPatchActive
+              }
               enabledAnchors={
-                selectedLayer?.locked || cropEditingLayerId
+                selectedLayer?.locked ||
+                cropEditingLayerId ||
+                isBrushToolActive ||
+                isCoverPatchActive
                   ? []
                   : selectedLayer?.type === "shape" &&
                       selectedLayer.shape === "line"

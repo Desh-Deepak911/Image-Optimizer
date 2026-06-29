@@ -7,6 +7,7 @@ import {
   type AddLayerUploadHandle,
 } from "@/components/advanced/AddLayerUpload";
 import { AdvancedExportPanel } from "@/components/advanced/AdvancedExportPanel";
+import { CleanupToolsPanel } from "@/components/advanced/CleanupToolsPanel";
 import { EditorControlsPanel } from "@/components/advanced/EditorControlsPanel";
 import { EditorEmptyState } from "@/components/advanced/EditorEmptyState";
 import { EditorToolbar } from "@/components/advanced/EditorToolbar";
@@ -27,7 +28,7 @@ import { useEditorKeyboardShortcuts } from "@/hooks/useEditorKeyboardShortcuts";
 import type { LayerAlignment } from "@/lib/konva/layerBounds";
 import type { QuickLayoutId } from "@/lib/konva/quickLayouts";
 import type { ScreenshotMockupId } from "@/lib/konva/screenshotMockups";
-import type { ImageSourceCrop } from "@/types/konvaEditor";
+import type { CleanupToolId, ImageSourceCrop } from "@/types/konvaEditor";
 
 const KonvaEditorStage = dynamic(
   () =>
@@ -126,6 +127,18 @@ export function AdvancedEditorWorkspace() {
     [editor],
   );
 
+  const handleCleanupToolChange = useCallback(
+    (tool: CleanupToolId) => {
+      if (tool !== "crop" && cropEditingLayerId) {
+        editor.checkpointHistory();
+        setCropEditingLayerId(null);
+      }
+
+      editor.setCleanupTool(tool);
+    },
+    [cropEditingLayerId, editor],
+  );
+
   return (
     <>
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] lg:gap-8">
@@ -192,6 +205,15 @@ export function AdvancedEditorWorkspace() {
                   onCropChange={(layerId: string, crop: ImageSourceCrop) => {
                     editor.updateLayerProperties(layerId, { crop }, false);
                   }}
+                  cleanupTool={editor.cleanupTool}
+                  brushSize={editor.brushSize}
+                  brushIntensity={editor.brushIntensity}
+                  onCleanupStrokeStart={editor.checkpointHistory}
+                  onCleanupStrokePreview={editor.previewCleanupStrokes}
+                  onCoverPatchComplete={(rect) => {
+                    editor.addCoverPatchLayer(rect);
+                    editor.setCleanupTool("select");
+                  }}
                 />
 
                 {editor.isExporting ? (
@@ -232,7 +254,31 @@ export function AdvancedEditorWorkspace() {
           </div>
 
           {editor.showCanvas ? (
-            <div className="order-3 lg:hidden">
+            <div className="order-3 lg:hidden space-y-4">
+              <CleanupToolsPanel
+                cleanupTool={editor.cleanupTool}
+                brushSize={editor.brushSize}
+                brushIntensity={editor.brushIntensity}
+                selectedLayer={editor.selectedLayer}
+                cropEditingLayerId={activeCropEditingLayerId}
+                onCleanupToolChange={handleCleanupToolChange}
+                onBrushSizeChange={editor.setBrushSize}
+                onBrushIntensityChange={editor.setBrushIntensity}
+                onStartCropEdit={(layerId) => {
+                  editor.selectLayer(layerId);
+                  editor.checkpointHistory();
+                  setCropEditingLayerId(layerId);
+                }}
+                onFinishCropEdit={() => {
+                  editor.checkpointHistory();
+                  setCropEditingLayerId(null);
+                }}
+                onResetCrop={(layerId) => {
+                  editor.resetLayerCrop(layerId);
+                  setCropEditingLayerId(null);
+                }}
+                onClearCleanupStrokes={editor.clearCleanupStrokes}
+              />
               <QuickLayoutPanel
                 imageLayerCount={editor.imageLayerCount}
                 onApplyLayout={(layoutId: QuickLayoutId) => {
@@ -345,6 +391,30 @@ export function AdvancedEditorWorkspace() {
 
           {editor.showCanvas ? (
             <div className="hidden lg:block space-y-4">
+              <CleanupToolsPanel
+                cleanupTool={editor.cleanupTool}
+                brushSize={editor.brushSize}
+                brushIntensity={editor.brushIntensity}
+                selectedLayer={editor.selectedLayer}
+                cropEditingLayerId={activeCropEditingLayerId}
+                onCleanupToolChange={handleCleanupToolChange}
+                onBrushSizeChange={editor.setBrushSize}
+                onBrushIntensityChange={editor.setBrushIntensity}
+                onStartCropEdit={(layerId) => {
+                  editor.selectLayer(layerId);
+                  editor.checkpointHistory();
+                  setCropEditingLayerId(layerId);
+                }}
+                onFinishCropEdit={() => {
+                  editor.checkpointHistory();
+                  setCropEditingLayerId(null);
+                }}
+                onResetCrop={(layerId) => {
+                  editor.resetLayerCrop(layerId);
+                  setCropEditingLayerId(null);
+                }}
+                onClearCleanupStrokes={editor.clearCleanupStrokes}
+              />
               <ScreenshotToolsPanel
                 imageLayerCount={editor.imageLayerCount}
                 selectedImageLayerId={

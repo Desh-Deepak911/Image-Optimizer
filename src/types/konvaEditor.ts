@@ -67,6 +67,35 @@ export interface ImageLayerStyle {
 
 export type ImageMaskType = "none" | "rectangle" | "rounded" | "circle";
 
+export type CleanupToolId =
+  | "select"
+  | "blur-brush"
+  | "pixelate-brush"
+  | "cover-patch"
+  | "crop";
+
+export type CleanupBrushType = "blur" | "pixelate";
+
+export interface CleanupBrushStroke {
+  id: string;
+  type: CleanupBrushType;
+  points: number[];
+  brushSize: number;
+  intensity: number;
+}
+
+export const COVER_PATCH_PREFIX = "Cover ·";
+
+export const DEFAULT_COVER_PATCH_STYLE = {
+  fill: "#ffffff",
+  opacity: 1,
+  cornerRadius: 8,
+  shadowBlur: 12,
+  shadowColor: "#000000",
+  shadowOffsetY: 4,
+  shadowOpacity: 0.2,
+} as const;
+
 export interface ImageSourceCrop {
   x: number;
   y: number;
@@ -108,6 +137,7 @@ export interface ImageEditorLayer extends BaseEditorLayer {
   crop?: ImageSourceCrop;
   filters: ImageFilters;
   style: ImageLayerStyle;
+  cleanupStrokes?: CleanupBrushStroke[];
 }
 
 export interface TextEditorLayer extends BaseEditorLayer {
@@ -125,6 +155,7 @@ export interface ShapeEditorLayer extends BaseEditorLayer {
   width: number;
   height: number;
   strokeWidth: number;
+  cornerRadius?: number;
   shadowBlur?: number;
   shadowColor?: string;
   shadowOffsetY?: number;
@@ -152,13 +183,17 @@ export interface LayerTransformUpdate {
 }
 
 export type EditorLayerUpdate = Partial<
-  Omit<ImageEditorLayer, "id" | "type" | "image" | "filters" | "style"> &
+  Omit<
+    ImageEditorLayer,
+    "id" | "type" | "image" | "filters" | "style" | "cleanupStrokes"
+  > &
     Omit<TextEditorLayer, "id" | "type"> &
     Omit<ShapeEditorLayer, "id" | "type">
 > & {
   filters?: Partial<ImageFilters>;
   style?: Partial<ImageLayerStyle>;
   crop?: ImageSourceCrop;
+  cleanupStrokes?: CleanupBrushStroke[];
 };
 
 export const DEFAULT_IMAGE_FILTERS: ImageFilters = {
@@ -349,6 +384,7 @@ export function createShapeLayerAt({
   name,
   strokeWidth = 0,
   locked = false,
+  cornerRadius,
   shadowStyle,
 }: {
   shape: ShapeKind;
@@ -360,6 +396,7 @@ export function createShapeLayerAt({
   name: string;
   strokeWidth?: number;
   locked?: boolean;
+  cornerRadius?: number;
   shadowStyle?: {
     shadowBlur: number;
     shadowColor: string;
@@ -382,8 +419,48 @@ export function createShapeLayerAt({
     x,
     y,
     rotation: 0,
+    ...(cornerRadius !== undefined ? { cornerRadius } : {}),
     ...(shadowStyle ?? {}),
   };
+}
+
+export function createCoverPatchLayer({
+  x,
+  y,
+  width,
+  height,
+  layerIndex,
+}: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  layerIndex: number;
+}): ShapeEditorLayer {
+  return createShapeLayerAt({
+    shape: "rectangle",
+    name: `${COVER_PATCH_PREFIX} Patch ${layerIndex + 1}`,
+    x,
+    y,
+    width,
+    height,
+    fill: DEFAULT_COVER_PATCH_STYLE.fill,
+    cornerRadius: DEFAULT_COVER_PATCH_STYLE.cornerRadius,
+    shadowStyle: {
+      shadowBlur: DEFAULT_COVER_PATCH_STYLE.shadowBlur,
+      shadowColor: DEFAULT_COVER_PATCH_STYLE.shadowColor,
+      shadowOffsetY: DEFAULT_COVER_PATCH_STYLE.shadowOffsetY,
+      shadowOpacity: DEFAULT_COVER_PATCH_STYLE.shadowOpacity,
+    },
+  });
+}
+
+export function isCoverPatchLayer(layer: EditorLayer): boolean {
+  return (
+    layer.type === "shape" &&
+    layer.shape === "rectangle" &&
+    layer.name.startsWith(COVER_PATCH_PREFIX)
+  );
 }
 
 export function getLayerTypeLabel(layer: EditorLayer): string {
@@ -393,6 +470,9 @@ export function getLayerTypeLabel(layer: EditorLayer): string {
     case "text":
       return "Text";
     case "shape":
+      if (isCoverPatchLayer(layer)) {
+        return "Cover";
+      }
       return layer.shape.charAt(0).toUpperCase() + layer.shape.slice(1);
   }
 }

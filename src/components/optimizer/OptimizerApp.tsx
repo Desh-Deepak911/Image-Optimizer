@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AdvancedEditorWorkspace } from "@/components/advanced/AdvancedEditorWorkspace";
+import { BatchWorkspace } from "@/components/batch/BatchWorkspace";
 import { Header } from "@/components/optimizer/Header";
 import { HeroSection } from "@/components/optimizer/HeroSection";
 import { ModeSwitcher } from "@/components/optimizer/ModeSwitcher";
@@ -15,15 +16,17 @@ export function OptimizerApp() {
     <div className="flex min-h-full flex-col bg-[#fbfbfd]">
       <Header />
 
-      <HeroSection compact={mode === "advanced"} />
+      <HeroSection compact={mode === "advanced" || mode === "batch"} />
 
       <ModeSwitcher mode={mode} onModeChange={setMode} />
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 pb-28 sm:px-6 lg:px-8 lg:pb-16">
         {mode === "optimizer" ? (
           <OptimizerWorkspace />
-        ) : (
+        ) : mode === "advanced" ? (
           <AdvancedEditorWorkspace />
+        ) : (
+          <BatchWorkspace />
         )}
       </main>
 

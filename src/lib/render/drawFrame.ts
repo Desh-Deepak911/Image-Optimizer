@@ -25,12 +25,25 @@ function getBackgroundColor(exportFormat: ExportFormat): string {
   return exportFormat === "jpeg" ? JPEG_BACKGROUND : PADDING_COLOR;
 }
 
+function getContainBackgroundColor(input: FrameRenderInput): string {
+  return input.containBackgroundColor ?? PADDING_COLOR;
+}
+
 function fillBackground(
   ctx: CanvasRenderingContext2D,
   frame: FrameDimensions,
   exportFormat: ExportFormat,
 ): void {
   ctx.fillStyle = getBackgroundColor(exportFormat);
+  ctx.fillRect(0, 0, frame.width, frame.height);
+}
+
+function fillContainBackground(
+  ctx: CanvasRenderingContext2D,
+  frame: FrameDimensions,
+  input: FrameRenderInput,
+): void {
+  ctx.fillStyle = getContainBackgroundColor(input);
   ctx.fillRect(0, 0, frame.width, frame.height);
 }
 
@@ -106,7 +119,7 @@ function drawFitMode(
   fitMode: FitMode,
 ): void {
   if (fitMode === "contain-padding") {
-    fillBackground(ctx, frame, input.exportFormat);
+    fillContainBackground(ctx, frame, input);
     drawContainImage(ctx, image, input, frame);
     return;
   }
@@ -139,7 +152,7 @@ function drawWithTransform(
   transform: SourceTransform,
 ): void {
   if (input.fitMode === "contain-padding") {
-    fillBackground(ctx, frame, input.exportFormat);
+    fillContainBackground(ctx, frame, input);
   } else if (input.fitMode === "cover" && input.exportFormat === "jpeg") {
     fillBackground(ctx, frame, input.exportFormat);
   } else if (input.fitMode === "blur-background") {
@@ -206,6 +219,7 @@ export function buildFrameRenderInput(options: {
   outputWidth: number;
   exportFormat: FrameRenderInput["exportFormat"];
   transform?: SourceTransform | null;
+  containBackgroundColor?: string;
 }): FrameRenderInput {
   return {
     source: options.source,
@@ -214,6 +228,9 @@ export function buildFrameRenderInput(options: {
     outputWidth: options.outputWidth,
     exportFormat: options.exportFormat,
     transform: options.transform,
+    ...(options.containBackgroundColor
+      ? { containBackgroundColor: options.containBackgroundColor }
+      : {}),
   };
 }
 

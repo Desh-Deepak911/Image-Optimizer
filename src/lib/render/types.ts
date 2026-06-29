@@ -26,6 +26,8 @@ export interface FrameRenderInput {
   exportFormat: ExportFormat;
   /** When set, overrides default fit-mode placement with an explicit crop. */
   transform?: SourceTransform | null;
+  /** Letterbox fill for contain-padding mode. Falls back to PADDING_COLOR. */
+  containBackgroundColor?: string;
 }
 
 export const PADDING_COLOR = "#e8e8ed";

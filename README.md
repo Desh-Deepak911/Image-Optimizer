@@ -17,6 +17,18 @@ A browser-only screenshot and photo optimizer with a multi-layer advanced editor
 - **Output size controls** — 1080px, 1440px, 1920px, or custom width
 - **Before/after metadata** — compare original and output file size and dimensions
 
+### Batch export mode
+
+Switch to **Batch export** to optimize many images with one shared preset:
+
+- **Multi-file upload** — add up to 30 PNG, JPG, JPEG, or WebP images (20 MB each)
+- **Shared settings** — aspect ratio, fit mode (contain, cover, blur background), output width, export format, and quality
+- **Contain background color** — customize letterbox padding when using contain mode
+- **Live preview** — select any queued image to preview batch settings before processing
+- **Batch processing** — process all images in the browser with per-file status (pending, processing, done, failed)
+- **ZIP download** — export all processed files as `image-optimizer-batch.zip` with `-optimized` filenames
+- **Queue controls** — remove individual files, clear batch, retry failed items
+
 ### Advanced editor mode
 
 Switch to **Advanced editor** for a full canvas composition workflow powered by [react-konva](https://konvajs.org/docs/react/):
@@ -82,6 +94,7 @@ All processing happens **entirely in your browser**. Images are read into memory
 | Styling | [Tailwind CSS](https://tailwindcss.com) |
 | Canvas editor | [Konva](https://konvajs.org) + [react-konva](https://konvajs.org/docs/react/) |
 | Image processing | Browser [Canvas API](https://developer.mozilla.org/en-US/docs/Web/API/Canvas_API) |
+| Batch ZIP export | [JSZip](https://stuk.github.io/jszip/) |
 
 ## Local setup
 
@@ -137,6 +150,7 @@ src/
 ├── app/                    # Next.js app router (layout, page, styles)
 ├── components/
 │   ├── advanced/           # Konva editor (canvas, layers, projects, export)
+│   ├── batch/              # Batch export workspace and controls
 │   ├── editor/             # Optimizer-mode interactive viewport
 │   └── optimizer/          # Shared UI shell and optimizer workspace
 ├── hooks/                  # Client state (upload, settings, history, projects)
@@ -148,7 +162,6 @@ src/
 
 ## Future improvements
 
-- **Batch processing** — optimize multiple images in one session
 - **Smart crop detection** — suggest focal points and auto-frame subjects
 - **Optional AI upscaling** — client-side or opt-in enhancement for low-resolution sources
 

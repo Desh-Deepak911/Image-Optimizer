@@ -5,7 +5,7 @@ import type {
 } from "@/types/optimizer";
 import { createFullImageCrop } from "@/lib/konva/imageCrop";
 
-export type AppMode = "optimizer" | "advanced";
+export type AppMode = "optimizer" | "advanced" | "batch";
 
 export type DimensionPreset =
   | "1080x1080"
